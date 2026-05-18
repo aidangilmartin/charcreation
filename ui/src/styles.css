@@ -381,3 +381,40 @@ html, body, #root {
 .cc-detail-name { font-size: 28px; font-weight: 600; }
 .cc-detail-sub  { color: var(--cc-textMuted); letter-spacing: 0.04em; }
 .cc-spawn-desc  { margin: 0; color: var(--cc-textMuted); }
+
+/* Stats block + intro hint -------------------------------------------- */
+
+.cc-stats-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--cc-panelBorder);
+  padding-top: 14px;
+}
+.cc-stats-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--cc-textMuted);
+}
+.cc-stats-loading {
+  color: var(--cc-textMuted);
+  font-size: 13px;
+  padding-top: 14px;
+  border-top: 1px solid var(--cc-panelBorder);
+}
+
+.cc-intro-hint {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--cc-panelBorder);
+  color: var(--cc-textMuted);
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  pointer-events: none;
+  z-index: 5;
+}

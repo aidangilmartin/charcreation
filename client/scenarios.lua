@@ -264,7 +264,9 @@ end
 
 function Scenarios.Start(scenario, characters, appearances)
   Scenarios.Stop()
+  local t = Log.timer('scenario', 'start ' .. (scenario and scenario.id or 'nil'))
 
+  Log.info('scenario', 'starting %s with %d chars', scenario and scenario.id or 'nil', characters and #characters or 0)
   Scene.Begin(scenario)
 
   local ctx = {
@@ -305,6 +307,13 @@ function Scenarios.Start(scenario, characters, appearances)
   Scene.RunTimeline(scenario.timeline, ctx)
 
   current = ctx
+  if Config.Logging.performance and Config.Logging.performance.logScenarioStartup then
+    local pedCount = 0; for _ in pairs(ctx.players) do pedCount = pedCount + 1 end
+    local npcCount = 0; for _ in pairs(ctx.roles) do npcCount = npcCount + 1 end
+    local vehCount = 0; for _ in pairs(ctx.vehicles) do vehCount = vehCount + 1 end
+    Log.info('scenario', 'started %s (peds=%d npcs=%d veh=%d props=%d)', scenario.id, pedCount, npcCount, vehCount, #ctx.props)
+  end
+  t()
   return ctx
 end
 
@@ -314,6 +323,7 @@ function Scenarios.Stop()
     return
   end
 
+  local id = current.scenario and current.scenario.id or '?'
   for _, ped in pairs(current.players) do
     if DoesEntityExist(ped) then DeleteEntity(ped) end
   end
@@ -329,6 +339,7 @@ function Scenarios.Stop()
 
   current = nil
   Scene.End()
+  Log.debug('scenario', 'stopped %s', id)
 end
 
 function Scenarios.PedToCid(ped) return current and current.pedToCid[ped] end

@@ -10,20 +10,18 @@ local STATE = {
 }
 
 local function dlog(...)
-  if not Config.Debug then return end
+  -- Legacy debug helper kept for backwards-compat. Routes through Log.debug.
   local args = { ... }
   for i = 1, #args do args[i] = tostring(args[i]) end
-  print(('[cc_multichar][server] %s'):format(table.concat(args, ' ')))
+  Log.debug('session', table.concat(args, ' '))
 end
 
 local function audit(event, src, message)
+  Log.warn('audit', '[%s] src=%s msg=%s', event, tostring(src), tostring(message))
   local cfg = Config.Security and Config.Security.audit
-  if not cfg or not cfg.enabled then return end
-  local line = ('[cc_multichar][%s] src=%s msg=%s'):format(event, tostring(src), tostring(message))
-  if cfg.print then print(line) end
-  if cfg.webhook and cfg.webhook ~= '' then
+  if cfg and cfg.webhook and cfg.webhook ~= '' then
     PerformHttpRequest(cfg.webhook, function() end, 'POST',
-      json.encode({ content = line }),
+      json.encode({ content = ('[%s] src=%s msg=%s'):format(event, tostring(src), tostring(message)) }),
       { ['Content-Type'] = 'application/json' })
   end
 end
@@ -68,12 +66,17 @@ local function eventAllowed(src, name)
 end
 
 local function startCheck()
+  Log.info('resource', 'starting cc_multichar v1.0.0')
   if Config.Database.adapter == 'oxmysql' and not DB.Available() then
-    print('^3[cc_multichar] oxmysql is not started — character data will not load until it is.^0')
+    Log.warn('db', 'oxmysql is not started — character data will not load until it is.')
   end
   DB.EnsureSchema()
+  Log.info('framework', 'detected framework: %s', CC.DetectFramework())
+  Log.info('resource', 'scenarios in pool: %d (group/empty + solo)', #(Config.Scenarios.scenarios or {}))
+  Log.info('resource', 'slot default: %d, ace tiers: %d', Config.Slots.default, #(Config.Slots.aceTiers or {}))
+  if Log.ValidateConfig then Log.ValidateConfig() end
   ServerReady = true
-  dlog('ready framework=' .. CC.DetectFramework())
+  Log.info('resource', 'ready')
 end
 
 local function buildSpawnOptions(session, character)
@@ -192,9 +195,11 @@ local function openSelector(src)
   local characters = Characters.Load(src, s.license) or {}
   s.characters = characters
   local slots = Slots.For(src, s.license)
+  local t = Log.timer('scenario', 'pickScenarioId+appearances')
   local scenarioId = pickScenarioId(#characters)
   local appearances = buildAppearancesFor(src, characters)
-  dlog('open src=' .. src .. ' chars=' .. #characters .. ' slots=' .. slots .. ' scenario=' .. scenarioId)
+  t()
+  Log.info('selector', 'open src=%s chars=%d slots=%d scenario=%s', src, #characters, slots, scenarioId)
   TriggerClientEvent('cc_multichar:client:open', src, {
     framework = CC.DetectFramework(),
     characters = characters,
@@ -270,6 +275,17 @@ RegisterNetEvent('cc_multichar:server:selectCharacter', function(cid)
   })
 end)
 
+RegisterNetEvent('cc_multichar:server:requestStats', function(cid)
+  local src = source
+  if not eventAllowed(src, 'requestStats') then return end
+  local s = ensureSession(src)
+  if s.state ~= STATE.SELECTING then return end
+  local char = findCharacterByCid(s, cid)
+  if not char then return end
+  local stats = Characters.GetExtendedStats(src, char.cid) or {}
+  TriggerClientEvent('cc_multichar:client:stats', src, { cid = char.cid, stats = stats })
+end)
+
 RegisterNetEvent('cc_multichar:server:selectSpawn', function(spawnId)
   local src = source
   if not eventAllowed(src, 'selectSpawn') then return end
@@ -301,6 +317,23 @@ RegisterNetEvent('cc_multichar:server:selectSpawn', function(spawnId)
     coords = selected.coords,
     character = char,
   })
+
+  -- Fire login hooks
+  if Config.LoginHooks then
+    if Config.LoginHooks.generic and Config.LoginHooks.generic.server then
+      TriggerEvent(Config.LoginHooks.generic.server, src, char, selected.coords)
+    end
+    if Config.LoginHooks.fireNativeFrameworkEvent then
+      local fw = CC.DetectFramework()
+      if fw == 'qbox' then
+        TriggerEvent('qbx_core:server:onPlayerLoaded', src)
+      elseif fw == 'qbcore' then
+        TriggerEvent('QBCore:Server:OnPlayerLoaded', src)
+      elseif fw == 'esx' then
+        TriggerEvent('esx:playerLoaded', src, char)
+      end
+    end
+  end
 end)
 
 RegisterNetEvent('cc_multichar:server:deleteCharacter', function(cid, typedName)
@@ -407,6 +440,61 @@ end)
 
 exports('OpenForPlayer', function(src)
   TriggerClientEvent('cc_multichar:client:requestOpen', src)
+end)
+
+-- /switch flow ------------------------------------------------------------
+-- Client triggers requestSwitch -> server asks the client to confirm safe-zone,
+-- waits for switchSafeZoneAck, then logs out the current character + reopens.
+
+local switchCooldowns = {}
+
+RegisterNetEvent('cc_multichar:server:requestSwitch', function()
+  local src = source
+  if not Config.Switch or not Config.Switch.enabled then return end
+
+  local now = os.time()
+  local cd = switchCooldowns[src]
+  local cooldownSec = Config.Switch.cooldownSeconds or 60
+  if cd and (now - cd) < cooldownSec then
+    TriggerClientEvent('cc_multichar:client:switchRejected', src, {
+      code = 'cooldown',
+      retryInSec = cooldownSec - (now - cd),
+    })
+    return
+  end
+
+  if Config.Switch.safeZone and Config.Switch.safeZone.customCheck then
+    local ok, reason = pcall(Config.Switch.safeZone.customCheck, src)
+    if ok and reason ~= nil and reason ~= true then
+      TriggerClientEvent('cc_multichar:client:switchRejected', src, { code = 'unsafe', reason = reason })
+      return
+    end
+  end
+
+  TriggerClientEvent('cc_multichar:client:switchSafeZoneCheck', src, Config.Switch.safeZone or {})
+end)
+
+RegisterNetEvent('cc_multichar:server:switchSafeZoneAck', function(result)
+  local src = source
+  if type(result) ~= 'table' then return end
+  if not result.ok then
+    TriggerClientEvent('cc_multichar:client:switchRejected', src, { code = 'unsafe', reason = result.reason })
+    return
+  end
+
+  -- Save and logout the current character
+  local adapter = CC.Adapter()
+  if adapter and adapter.logout then pcall(adapter.logout, src) end
+
+  switchCooldowns[src] = os.time()
+  -- Reset session state and reopen the selector
+  local s = ensureSession(src)
+  s.state = STATE.IDLE
+  s.characters = {}
+  s.selectedCid = nil
+  s.pendingCharacter = nil
+  TriggerClientEvent('cc_multichar:client:switchPrepare', src)
+  openSelector(src)
 end)
 
 -- For "manual" invocation appearance editors: call this from your editor

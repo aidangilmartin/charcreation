@@ -71,3 +71,26 @@ export type CreateResult =
 export type DeleteResult =
   | { ok: true; cid: string; characters: Character[] }
   | { ok: false; reason: string };
+
+export type CharacterStats = {
+  playtimeMinutes?: number;
+  lastSeen?: string;
+  jobName?: string;
+  jobGrade?: string | number;
+  cash?: number;
+  bank?: number;
+  kills?: number;
+  deaths?: number;
+  kd?: number;
+  distanceDrivenKm?: number;
+  ownedVehicles?: number;
+  favoriteVehicle?: string;
+  ownedProperties?: number;
+  citations?: number;
+};
+
+export type SwitchRejection = {
+  code: 'cooldown' | 'unsafe' | string;
+  reason?: string;
+  retryInSec?: number;
+};

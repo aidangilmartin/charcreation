@@ -1,21 +1,79 @@
+--[[
+  cc_multichar — Scenario definitions
+  ---------------------------------------------------------------------------
+  A "scenario" is a declarative description of one cinematic scene shown by
+  the selector. The server picks ONE scenario per session (weighted-random)
+  and ships its id to the client, which spawns all the entities, runs the
+  choreography timeline, and lets the player click any character ped to
+  select that character.
+
+  Scenarios are ensemble — every player character appears in the scene via
+  the special `players` role. NPCs, vehicles and props fill out the rest.
+
+  ===========================================================================
+  Scenario shape
+  ===========================================================================
+    id          string  unique identifier (used for the random pick + skip+
+                        debugging)
+    weight      number  relative selection probability when pickStrategy is
+                        'weighted-random' (default 1)
+    minChars    number  scenario only available when char count >= this
+    maxChars    number  scenario only available when char count <= this
+    weather     string  GTA weather id ('CLEAR', 'EXTRASUNNY', 'CLOUDS', etc.)
+    hour/minute number  in-game clock override
+    anchor      vec4    absolute world position. All offsets below are relative.
+    camera = {
+      position  vec3   absolute world position of the camera
+      lookAt    vec3   absolute world position the camera points at
+      fov       number 25..90 (45 looks "natural", 35 is cinematic)
+    }
+    ambient = {
+      audioScene  string  native GTA audio scene name (StartAudioScene)
+      sounds      list    optional looping one-shot sounds; each entry is
+                          { set, name, intervalMs, loop }
+    }
+    roles = {
+      <name> = { kind = 'players', layout = fn(i,total) -> vec4, animation, weapon },
+      <name> = { kind = 'npc', model, offset = vec4, animation, weapon, flag },
+    }
+    vehicles = {
+      <name> = {
+        model, primaryColor, secondaryColor, siren, offset = vec4,
+        driverRole = '<roleName>',   -- OR
+        driverRoleIndex = <int>,     -- index into the players list
+        passengerRoles = { ... },    -- list of role names or numeric player indexes
+        task = { kind = 'driveAhead' | 'pursue', speed, distance, target, flags }
+        options = { hoodOpen = true }
+      }
+    }
+    props = { { model, offset = vec3, heading = number } }
+    timeline = list of timed events. Each entry has `at` (ms from scenario
+               start) and a `kind`:
+                 - 'cameraOrbit'  { radius, height, durationMs, around }
+                 - 'cameraDolly'  { to = vec3, durationMs }
+                 - 'cameraTrack'  { target = 'anchor'|'role:X'|'vehicle:X',
+                                    offset = vec3, durationMs }
+
+  ===========================================================================
+  Picking a scenario
+  ===========================================================================
+    pickStrategy = 'weighted-random' | 'sequential' | 'fixed'
+      weighted-random: standard. Higher weight = more likely.
+      sequential:      cycles through the pool in order each open.
+      fixed:           always plays Config.Scenarios.scenarios[fixedIndex].
+
+  ===========================================================================
+  empty
+  ===========================================================================
+  Special scenario played when the player has zero characters. No ensemble,
+  just a camera at a scenic spot to make the "no characters yet" experience
+  feel intentional.
+]]
+
 Config = Config or {}
 
--- Ensemble-style scenarios. Every scenario places ALL of the player's
--- characters into the scene via the special 'players' role. Click any
--- character's ped to select them.
---
--- Role kinds
---   { kind = 'players', layout = fn(i, total) -> vec4, animation = {...}, weapon? }
---   { kind = 'npc',     model = 'hash_or_name', offset = vec4, animation = {...}, weapon? }
---
--- Vehicles
---   { model, primaryColor, secondaryColor, offset, driverRole?, passengerRoles?,
---     siren?, task = { kind = 'driveAhead' | 'pursue' | 'idle', ... } }
---
--- Coordinates: anchor is absolute; everything else is an offset from anchor.
-
 Config.Scenarios = {
-  pickStrategy = 'weighted-random', -- 'weighted-random' | 'sequential' | 'fixed'
+  pickStrategy = 'weighted-random',
   fixedIndex = 1,
 
   scenarios = {
@@ -24,6 +82,12 @@ Config.Scenarios = {
       id = 'bbq',
       weight = 3,
       weather = 'EXTRASUNNY', hour = 19, minute = 45,
+      -- Ambient SFX. `audioScene` activates a native GTA audio scene; `sounds`
+      -- plays looping one-shots near the anchor on an interval. Tune per scene.
+      ambient = {
+        audioScene = 'BIKER_FORMATION_RIDE_AUDIO_SCENE',
+        sounds = {},
+      },
       anchor = vector4(-1037.04, -2731.99, 19.45, 240.0),
       camera = {
         position = vector3(-1041.5, -2728.0, 21.0),
@@ -56,6 +120,10 @@ Config.Scenarios = {
       id = 'fishing',
       weight = 3,
       weather = 'CLEAR', hour = 18, minute = 15,
+      ambient = {
+        audioScene = 'MP_LEADERBOARD_SCENE',
+        sounds = {},
+      },
       anchor = vector4(-1827.21, -1224.16, 13.02, 137.93),
       camera = {
         position = vector3(-1823.7, -1219.8, 15.0),
@@ -83,6 +151,10 @@ Config.Scenarios = {
       id = 'mechanic_garage',
       weight = 2,
       weather = 'OVERCAST', hour = 14, minute = 0,
+      ambient = {
+        audioScene = 'CAR_MOD_GARAGE_FILTER_SCENE',
+        sounds = {},
+      },
       anchor = vector4(-337.7, -136.3, 39.0, 250.0),
       camera = {
         position = vector3(-333.5, -133.5, 40.2),
@@ -117,6 +189,10 @@ Config.Scenarios = {
       id = 'hospital',
       weight = 1,
       weather = 'OVERCAST', hour = 22, minute = 0,
+      ambient = {
+        audioScene = 'MP_REST_HOSP_SCENE',
+        sounds = {},
+      },
       anchor = vector4(307.7, -1433.2, 30.5, 180.0),
       camera = {
         position = vector3(309.3, -1430.8, 31.8),
@@ -149,6 +225,10 @@ Config.Scenarios = {
       id = 'desert_drug_deal',
       weight = 2,
       weather = 'EXTRASUNNY', hour = 17, minute = 30,
+      ambient = {
+        audioScene = 'DLC_HEISTS_FINALE_SCREEN_SCENE',
+        sounds = {},
+      },
       anchor = vector4(1864.0, 3683.0, 33.6, 120.0),
       camera = {
         position = vector3(1867.0, 3685.5, 34.9),
@@ -187,6 +267,10 @@ Config.Scenarios = {
       id = 'store_robbery',
       weight = 2,
       weather = 'CLOUDS', hour = 23, minute = 10,
+      ambient = {
+        audioScene = 'MP_HEIST_TUTORIAL_AUDIO_SCENE',
+        sounds = {},
+      },
       anchor = vector4(24.5, -1347.3, 29.5, 270.0),
       camera = {
         position = vector3(27.0, -1346.0, 30.6),
@@ -220,6 +304,11 @@ Config.Scenarios = {
       id = 'police_chase',
       weight = 2,
       weather = 'CLEAR', hour = 1, minute = 30,
+      -- Cruiser siren is automatic via vehicles.cruiser.siren = true.
+      ambient = {
+        audioScene = 'CAR_CHASE_AUDIO_SCENE',
+        sounds = {},
+      },
       anchor = vector4(-1840.0, 440.0, 117.0, 90.0),
       camera = {
         position = vector3(-1825.0, 455.0, 120.0),
@@ -266,6 +355,10 @@ Config.Scenarios = {
       id = 'drive_by',
       weight = 1,
       weather = 'CLEAR', hour = 0, minute = 45,
+      ambient = {
+        audioScene = 'CAR_CHASE_AUDIO_SCENE',
+        sounds = {},
+      },
       anchor = vector4(-1300.0, -390.0, 36.7, 200.0),
       camera = {
         position = vector3(-1297.5, -388.0, 37.6),

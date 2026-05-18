@@ -233,6 +233,78 @@ function Characters.GetLastLocation(src, cid)
   return nil
 end
 
+function Characters.GetExtendedStats(src, cid)
+  if type(Config.DataProviders.customGetExtendedStats) == 'function' then
+    local ok, stats = pcall(Config.DataProviders.customGetExtendedStats, src, cid)
+    if ok and type(stats) == 'table' then return stats end
+  end
+
+  if not DB.Available() then return {} end
+
+  local stats = {}
+  local cfg = Config.Stats or {}
+  local fw = CC.DetectFramework()
+
+  if fw == 'qbox' or fw == 'qbcore' then
+    local row = DB.Query('SELECT charinfo, metadata, money, job, last_updated FROM players WHERE citizenid = ? LIMIT 1', { cid })
+    if row and row[1] then
+      local r = row[1]
+      local meta = decodeJson(r.metadata, {}) or {}
+      local money = decodeJson(r.money, {}) or {}
+      local job = decodeJson(r.job, {}) or {}
+
+      if cfg.showPlaytime then stats.playtimeMinutes = tonumber(meta.playtime) or 0 end
+      if cfg.showLastSeen then stats.lastSeen = r.last_updated end
+      if cfg.showJobRank then
+        stats.jobName = job.label or job.name
+        stats.jobGrade = job.grade and (job.grade.name or job.grade.level)
+      end
+      if cfg.showMoney then
+        stats.cash = tonumber(money.cash) or 0
+        stats.bank = tonumber(money.bank) or 0
+      end
+      if cfg.showKD then
+        local kills = tonumber(meta.kills) or 0
+        local deaths = tonumber(meta.deaths) or 0
+        stats.kills = kills; stats.deaths = deaths
+        stats.kd = deaths > 0 and (kills / deaths) or kills
+      end
+      if cfg.showDistanceDriven then stats.distanceDrivenKm = tonumber(meta.distanceDriven) or 0 end
+
+      if cfg.showOwnedVehicles then
+        stats.ownedVehicles = DB.Scalar('SELECT COUNT(*) FROM player_vehicles WHERE citizenid = ?', { cid }) or 0
+      end
+      if cfg.showFavoriteVehicle then
+        local fav = DB.Query([[
+          SELECT vehicle, COUNT(*) AS c FROM player_vehicles
+          WHERE citizenid = ? GROUP BY vehicle ORDER BY c DESC LIMIT 1
+        ]], { cid })
+        if fav and fav[1] then stats.favoriteVehicle = fav[1].vehicle end
+      end
+      if cfg.showOwnedProperties then
+        local houses = DB.Scalar('SELECT COUNT(*) FROM player_houses WHERE citizenid = ?', { cid }) or 0
+        local apts = DB.Scalar('SELECT COUNT(*) FROM apartments WHERE citizenid = ?', { cid }) or 0
+        stats.ownedProperties = (tonumber(houses) or 0) + (tonumber(apts) or 0)
+      end
+      if cfg.showCriminalRecord then
+        -- mdt-style citations table; fallback gracefully if missing
+        local ok, count = pcall(DB.Scalar, 'SELECT COUNT(*) FROM mdt_citations WHERE citizenid = ?', { cid })
+        if ok and type(count) == 'number' then stats.citations = count end
+      end
+    end
+  elseif fw == 'esx' then
+    local row = DB.Query('SELECT job_grade FROM users WHERE identifier = ? LIMIT 1', { cid })
+    if row and row[1] then
+      if cfg.showJobRank then stats.jobGrade = row[1].job_grade end
+    end
+    if cfg.showOwnedVehicles then
+      stats.ownedVehicles = DB.Scalar('SELECT COUNT(*) FROM owned_vehicles WHERE owner = ?', { cid }) or 0
+    end
+  end
+
+  return stats
+end
+
 function Characters.GetAppearance(src, cid)
   if type(Config.DataProviders.customGetAppearance) == 'function' then
     local ok, a = pcall(Config.DataProviders.customGetAppearance, src, cid)

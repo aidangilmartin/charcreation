@@ -1,8 +1,10 @@
-import type { Character, UIConfig } from '../types';
+import type { Character, CharacterStats, UIConfig } from '../types';
+import { StatsBlock } from './StatsBlock';
 
 type Props = {
   ui: UIConfig;
   character: Character;
+  stats: CharacterStats | null;
   disabled: boolean;
   onPlay: () => void;
   onDelete: () => void;
@@ -38,7 +40,7 @@ function formatField(c: Character, field: string) {
   }
 }
 
-export function CharacterPanel({ ui, character, disabled, onPlay, onDelete, onClose }: Props) {
+export function CharacterPanel({ ui, character, stats, disabled, onPlay, onDelete, onClose }: Props) {
   return (
     <aside className="cc-character-panel">
       <button className="cc-panel-close" onClick={onClose} aria-label="Close">×</button>
@@ -56,6 +58,7 @@ export function CharacterPanel({ ui, character, disabled, onPlay, onDelete, onCl
             </div>
           ))}
       </dl>
+      <StatsBlock stats={stats} />
       <div className="cc-actions">
         <button className="cc-btn cc-btn-primary" disabled={disabled} onClick={onPlay}>
           {ui.text.playButton || 'Play'}

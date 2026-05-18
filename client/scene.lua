@@ -3,6 +3,9 @@ Scene = Scene or {}
 local activeCam
 local activeScenario
 local timelineThread = 0
+local activeAudioScene = nil
+local soundLoopThread = 0
+local skipIntroRequested = false
 
 local function destroyCam()
   if activeCam then
@@ -19,6 +22,46 @@ function Scene.SetAmbient(scenario)
   SetWeatherTypePersist(scenario.weather or 'CLEAR')
   SetWeatherTypeNow(scenario.weather or 'CLEAR')
   SetWeatherTypeNowPersist(scenario.weather or 'CLEAR')
+  Scene.StartAmbientAudio(scenario)
+end
+
+function Scene.StartAmbientAudio(scenario)
+  Scene.StopAmbientAudio()
+  local ambient = scenario.ambient
+  if not ambient then return end
+
+  if ambient.audioScene and ambient.audioScene ~= '' then
+    StartAudioScene(ambient.audioScene)
+    activeAudioScene = ambient.audioScene
+  end
+
+  if ambient.sounds and #ambient.sounds > 0 then
+    soundLoopThread = soundLoopThread + 1
+    local thisRun = soundLoopThread
+    local anchor = scenario.anchor
+    local anyLoop = false
+    for _, s in ipairs(ambient.sounds) do if s.loop then anyLoop = true; break end end
+    CreateThread(function()
+      repeat
+        for _, s in ipairs(ambient.sounds) do
+          if not (activeScenario and thisRun == soundLoopThread) then return end
+          local id = GetSoundId()
+          PlaySoundFromCoord(id, s.name, anchor.x, anchor.y, anchor.z, s.set, false, 0, false)
+          Wait(s.intervalMs or 4000)
+          StopSound(id)
+          ReleaseSoundId(id)
+        end
+      until not anyLoop or not (activeScenario and thisRun == soundLoopThread)
+    end)
+  end
+end
+
+function Scene.StopAmbientAudio()
+  if activeAudioScene then
+    StopAudioScene(activeAudioScene)
+    activeAudioScene = nil
+  end
+  soundLoopThread = soundLoopThread + 1
 end
 
 function Scene.HidePlayerPed()
@@ -60,6 +103,7 @@ end
 function Scene.Begin(scenario)
   if activeScenario then Scene.End() end
   activeScenario = scenario
+  skipIntroRequested = false
 
   DoScreenFadeOut(Config.SceneTimings.fadeOutMs)
   while not IsScreenFadedOut() do Wait(0) end
@@ -79,18 +123,27 @@ function Scene.Begin(scenario)
   end)
 
   Wait(150)
-  DoScreenFadeIn(Config.SceneTimings.fadeInMs)
+  local fadeIn = skipIntroRequested and 120 or Config.SceneTimings.fadeInMs
+  DoScreenFadeIn(fadeIn)
 end
 
 function Scene.End()
   activeScenario = nil
   timelineThread = timelineThread + 1
+  Scene.StopAmbientAudio()
   destroyCam()
   RenderScriptCams(false, false, 0, true, true)
   ClearOverrideWeather()
   ClearWeatherTypePersist()
   NetworkClearClockTimeOverride()
+  skipIntroRequested = false
 end
+
+function Scene.RequestSkipIntro()
+  skipIntroRequested = true
+end
+
+function Scene.IsSkipRequested() return skipIntroRequested end
 
 -- Camera moves -------------------------------------------------------------
 
@@ -155,6 +208,12 @@ function Scene.RunTimelineEvent(ev, ctx)
     local thisRun = timelineThread
     CreateThread(function()
       while activeCam and activeScenario and thisRun == timelineThread do
+        if skipIntroRequested then
+          local x = center.x + radius
+          SetCamCoord(activeCam, x, center.y, center.z + height)
+          PointCamAtCoord(activeCam, center.x, center.y, center.z)
+          break
+        end
         local elapsed = GetGameTimer() - startTime
         local t = math.min(elapsed / duration, 1.0)
         local angle = t * math.pi * 2
@@ -175,6 +234,10 @@ function Scene.RunTimelineEvent(ev, ctx)
     local thisRun = timelineThread
     CreateThread(function()
       while activeCam and activeScenario and thisRun == timelineThread do
+        if skipIntroRequested then
+          SetCamCoord(activeCam, to.x, to.y, to.z)
+          break
+        end
         local elapsed = GetGameTimer() - startTime
         local t = math.min(elapsed / duration, 1.0)
         local s = 1.0 - math.cos(t * math.pi / 2.0) -- ease-out

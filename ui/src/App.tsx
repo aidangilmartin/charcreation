@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { nuiPost, onMessage } from './nui';
 import type {
   Character,
+  CharacterStats,
   CreateResult,
   DeleteResult,
   OpenPayload,
   SpawnOption,
   SpawnPickerPayload,
+  SwitchRejection,
   UIConfig,
 } from './types';
 import { CreateForm } from './components/CreateForm';
@@ -14,6 +16,7 @@ import { DeleteConfirm } from './components/DeleteConfirm';
 import { SpawnPicker } from './components/SpawnPicker';
 import { SceneOverlay } from './components/SceneOverlay';
 import { CharacterPanel } from './components/CharacterPanel';
+import { SwitchConfirm } from './components/SwitchConfirm';
 
 type Modal = 'none' | 'create' | 'delete' | 'spawn';
 
@@ -57,6 +60,11 @@ export function App() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [statsByCid, setStatsByCid] = useState<Record<string, CharacterStats>>({});
+  const [switchModal, setSwitchModal] = useState<{ open: boolean; cooldownSec: number; rejection: SwitchRejection | null }>({
+    open: false, cooldownSec: 60, rejection: null,
+  });
+  const [introSkipHint, setIntroSkipHint] = useState<string | null>(null);
 
   useEffect(() => {
     const off = [
@@ -116,6 +124,23 @@ export function App() {
         setSpawnData(null);
         setModal('none');
       }),
+      onMessage('stats', (data: { cid: string; stats: CharacterStats }) => {
+        if (data?.cid) {
+          setStatsByCid((prev) => ({ ...prev, [data.cid]: data.stats || {} }));
+        }
+      }),
+      onMessage('switchConfirm', (data: { cooldownSeconds: number }) => {
+        setSwitchModal({ open: true, cooldownSec: data?.cooldownSeconds ?? 60, rejection: null });
+      }),
+      onMessage('switchConfirmClose', () => {
+        setSwitchModal({ open: false, cooldownSec: 60, rejection: null });
+      }),
+      onMessage('switchRejected', (data: { reason: SwitchRejection }) => {
+        setSwitchModal((prev) => ({ ...prev, rejection: data?.reason ?? null }));
+      }),
+      onMessage('introHint', (data: { text: string | null }) => {
+        setIntroSkipHint(data?.text ?? null);
+      }),
     ];
     return () => off.forEach((fn) => fn());
   }, []);
@@ -124,6 +149,13 @@ export function App() {
     () => characters.find((c) => c.cid === selectedCid) ?? null,
     [characters, selectedCid],
   );
+
+  // Request stats whenever selection changes
+  useEffect(() => {
+    if (selectedCid && !statsByCid[selectedCid]) {
+      nuiPost('requestStats', { cid: selectedCid });
+    }
+  }, [selectedCid, statsByCid]);
 
   const hoveredCharacter = useMemo(
     () => characters.find((c) => c.cid === hoveredCid) ?? null,
@@ -179,7 +211,17 @@ export function App() {
     nuiPost('clearSelection');
   }, []);
 
-  if (!visible) return null;
+  // The switch confirm modal can be triggered when the selector itself isn't open.
+  if (!visible) {
+    if (!switchModal.open) return null;
+    return (
+      <SwitchConfirm
+        cooldownSeconds={switchModal.cooldownSec}
+        rejection={switchModal.rejection}
+        onClose={() => setSwitchModal({ open: false, cooldownSec: 60, rejection: null })}
+      />
+    );
+  }
 
   const sceneEnabled = modal === 'none';
   const showCreate = slots > characters.length;
@@ -213,10 +255,23 @@ export function App() {
         <CharacterPanel
           ui={ui}
           character={selectedCharacter}
+          stats={statsByCid[selectedCharacter.cid] ?? null}
           disabled={busy}
           onPlay={onPlay}
           onDelete={onDeleteRequest}
           onClose={onCloseSelection}
+        />
+      )}
+
+      {introSkipHint && sceneEnabled && (
+        <div className="cc-intro-hint">{introSkipHint}</div>
+      )}
+
+      {switchModal.open && (
+        <SwitchConfirm
+          cooldownSeconds={switchModal.cooldownSec}
+          rejection={switchModal.rejection}
+          onClose={() => setSwitchModal({ open: false, cooldownSec: 60, rejection: null })}
         />
       )}
 

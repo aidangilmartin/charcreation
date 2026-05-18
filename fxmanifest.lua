@@ -16,12 +16,14 @@ files {
 
 shared_scripts {
   '@oxmysql/lib/MySQL.lua',
+  'config/logging.lua',
   'config/core.lua',
   'config/scenarios.lua',
   'config/spawn.lua',
   'config/ui.lua',
   'config/security.lua',
   'shared/framework.lua',
+  'shared/log.lua',
 }
 
 client_scripts {
@@ -29,6 +31,7 @@ client_scripts {
   'client/scenarios.lua',
   'client/hover.lua',
   'client/spawn.lua',
+  'client/overlay.lua',
   'client/main.lua',
 }
 
