@@ -70,15 +70,15 @@ end
 
 local function query(sql, params)
   if not hasDb() then return nil end
-  return exports.oxmysql:query_sync(sql, params or {})
+  return MySQL.query.await(sql, params or {})
 end
 local function scalar(sql, params)
   if not hasDb() then return nil end
-  return exports.oxmysql:scalar_sync(sql, params or {})
+  return MySQL.scalar.await(sql, params or {})
 end
 local function execute(sql, params)
   if not hasDb() then return 0 end
-  return exports.oxmysql:update_sync(sql, params or {}) or 0
+  return MySQL.update.await(sql, params or {}) or 0
 end
 
 local function buildCharacters(src)
