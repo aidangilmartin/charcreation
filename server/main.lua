@@ -131,11 +131,16 @@ local function buildSpawnOptions(session, character)
 
   if Config.Spawn.includeLastLocation then
     local last = Characters.GetLastLocation(session.src, character.cid)
+    local lastDescription = 'Where you logged off'
+    if not last and Config.Spawn.fallbackToFirstStatic and (Config.Spawn.staticPoints or {})[1] then
+      last = Config.Spawn.staticPoints[1].coords
+      lastDescription = 'Default spawn point'
+    end
     if last then
       table.insert(options, 1, {
         id = 'last',
         label = 'Last Location',
-        description = 'Where you logged off',
+        description = lastDescription,
         kind = 'last',
         coords = last,
       })
@@ -163,7 +168,18 @@ local function pickScenarioId(characterCount)
   if #candidates == 0 then
     return (Config.Scenarios.empty and Config.Scenarios.empty.id) or 'empty_intro'
   end
-  -- Weighted random
+
+  local strategy = Config.Scenarios.pickStrategy or 'weighted-random'
+  if strategy == 'fixed' then
+    local fixed = pool[Config.Scenarios.fixedIndex or 1] or pool[1]
+    return fixed and fixed.id or ((Config.Scenarios.empty and Config.Scenarios.empty.id) or 'empty_intro')
+  end
+
+  if strategy == 'sequential' then
+    Config.Scenarios._seqIdx = ((Config.Scenarios._seqIdx or 0) % #candidates) + 1
+    return candidates[Config.Scenarios._seqIdx].id
+  end
+
   local total = 0
   for _, s in ipairs(candidates) do total = total + (s.weight or 1) end
   local roll = math.random() * total
@@ -312,11 +328,19 @@ RegisterNetEvent('cc_multichar:server:selectSpawn', function(spawnId)
   if not char then return end
 
   -- Hand the character to the framework
-  local adapter = CC.Adapter()
-  if char._seed then
-    adapter.login(src, nil, char._seed)
+  if type(Config.DataProviders.customLoginCharacter) == 'function' then
+    local ok, handled = pcall(Config.DataProviders.customLoginCharacter, src, char)
+    if not ok or handled == false then
+      audit('login_failed', src, ('customLoginCharacter failed for cid=%s'):format(tostring(char.cid)))
+      return
+    end
   else
-    adapter.login(src, char.cid)
+    local adapter = CC.Adapter()
+    if char._seed then
+      adapter.login(src, nil, char._seed)
+    else
+      adapter.login(src, char.cid)
+    end
   end
 
   -- Restore the player's routing bucket BEFORE telling the client to teleport,
@@ -399,6 +423,22 @@ RegisterNetEvent('cc_multichar:server:createCharacter', function(info)
   if #info.lastname  < v.minNameLength or #info.lastname  > v.maxNameLength then return end
   if not isStr(info.dob) or not info.dob:match('^%d%d%d%d%-%d%d%-%d%d$') then return end
   if info.gender ~= 'm' and info.gender ~= 'f' then return end
+  if not isStr(info.nationality) then return end
+  info.nationality = trim(info.nationality)
+  if #info.nationality == 0 or #info.nationality > v.maxNameLength then return end
+
+  local y, m, d = info.dob:match('^(%d%d%d%d)%-(%d%d)%-(%d%d)$')
+  y, m, d = tonumber(y), tonumber(m), tonumber(d)
+  if not y or not m or not d or m < 1 or m > 12 then return end
+  local daysByMonth = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
+  if (y % 4 == 0 and y % 100 ~= 0) or (y % 400 == 0) then
+    daysByMonth[2] = 29
+  end
+  if d < 1 or d > daysByMonth[m] then return end
+  local now = os.date('*t')
+  local age = now.year - y
+  if now.month < m or (now.month == m and now.day < d) then age = age - 1 end
+  if age < v.minAge or age > v.maxAge then return end
 
   -- Slot check
   local slots = Slots.For(src, s.license)
@@ -513,8 +553,6 @@ end)
 exports('FinishAppearance', function(src)
   local s = ensureSession(src)
   if s.state == STATE.CREATING and s.pendingCharacter then
-    TriggerEvent('cc_multichar:server:appearanceComplete', src)
-    -- Run inline so we get the right `source`.
     s.state = STATE.SPAWN_SELECT
     s.characters[#s.characters + 1] = s.pendingCharacter
     local options = buildSpawnOptions(s, s.pendingCharacter)

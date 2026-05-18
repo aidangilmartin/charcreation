@@ -3,6 +3,7 @@ local sessionCharacters = {}
 local sessionAppearances = {}
 local introSkipThread = 0
 local lastDiscordAppId = nil
+local sendUI
 
 local function clog(...)
   local args = { ... }
@@ -74,7 +75,7 @@ local function startIntroSkipWatcher()
   end)
 end
 
-local function sendUI(action, data)
+sendUI = function(action, data)
   SendNUIMessage({ action = action, data = data })
 end
 
@@ -274,6 +275,13 @@ RegisterNUICallback('selectSpawn', function(data, cb)
   cb({ ok = true })
 end)
 
+RegisterNUICallback('previewSpawn', function(data, cb)
+  if data and data.coords then
+    Spawn.Preview(data.coords, data.durationMs)
+  end
+  cb({ ok = true })
+end)
+
 CreateThread(function()
   if not Config.AutoOpenOnJoin then return end
   Wait(Config.AutoOpenDelayMs or 1500)
@@ -308,6 +316,10 @@ end
 
 RegisterCommand(Config.Switch and Config.Switch.command or 'switch', function()
   if not Config.Switch or not Config.Switch.enabled then return end
+  if Config.Switch.requireConfirm == false then
+    TriggerServerEvent('cc_multichar:server:requestSwitch')
+    return
+  end
   openSwitchConfirm()
 end, false)
 

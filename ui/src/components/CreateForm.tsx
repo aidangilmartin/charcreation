@@ -20,6 +20,13 @@ function ageFromDob(dob: string): number | null {
   if (!m) return null;
   const [, y, mo, d] = m;
   const date = new Date(Number(y), Number(mo) - 1, Number(d));
+  if (
+    date.getFullYear() !== Number(y) ||
+    date.getMonth() !== Number(mo) - 1 ||
+    date.getDate() !== Number(d)
+  ) {
+    return null;
+  }
   const now = new Date();
   let age = now.getFullYear() - date.getFullYear();
   const md = now.getMonth() - date.getMonth();
@@ -51,6 +58,7 @@ export function CreateForm({ ui, error, disabled, onCancel, onSubmit }: Props) {
       else if (age > v.maxAge) issues.push(`Must be ${v.maxAge} or younger`);
     }
     if (!nationality.trim()) issues.push('Nationality required');
+    if (nationality.length > v.maxNameLength) issues.push('Nationality too long');
     return issues;
   }, [firstname, lastname, dob, nationality, v]);
 
@@ -103,6 +111,7 @@ export function CreateForm({ ui, error, disabled, onCancel, onSubmit }: Props) {
               type="text"
               placeholder={ui.text.nationalityHint || ''}
               value={nationality}
+              maxLength={v.maxNameLength}
               onChange={(e) => setNationality(e.target.value)}
             />
           </label>
