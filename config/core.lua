@@ -1,35 +1,54 @@
 Config = Config or {}
 
-Config.Framework = 'auto' -- auto | qbox | qbcore
 Config.Debug = false
-Config.EnableCompatShim = true
 
-Config.Release = {
-  strictMode = true,
-}
+Config.Framework = 'auto' -- auto | qbox | qbcore | esx | standalone
+
+Config.AutoOpenOnJoin = true
+Config.AutoOpenDelayMs = 1500
 
 Config.Slots = {
   default = 4,
-  byLicense = {},
-  byGroup = {}
-}
-
-Config.CharacterCreation = {
-  export = {
-    resource = 'your_creator',
-    name = 'OpenCreator'
-  }
+  aceTiers = {
+    { ace = 'group.admin',    slots = 8 },
+    { ace = 'cc.donator.t3',  slots = 7 },
+    { ace = 'cc.donator.t2',  slots = 6 },
+    { ace = 'cc.donator.t1',  slots = 5 },
+  },
+  perLicense = {},
 }
 
 Config.Database = {
-  adapter = 'oxmysql', -- oxmysql | custom
+  adapter = 'oxmysql',
+  slotOverridesTable = 'cc_multichar_slots',
+  ensureSchemaOnStart = true,
+}
+
+Config.Appearance = {
+  applyToPreview = true,
+  loader = {
+    resource = 'illenium-appearance',
+    export = 'getPedAppearance',
+    setter = 'setPedAppearance',
+  },
+  qbClothingFallback = true,
+}
+
+Config.CharacterCreator = {
+  resource = 'illenium-appearance',
+  export = 'startPlayerCustomization',
+  -- 'callback': export(function() ... end)  e.g. illenium-appearance, fivem-appearance
+  -- 'blocking': export()                    yields until the editor finishes
+  -- 'manual':   the editor calls exports.cc_multichar:FinishAppearance(src) when done
+  invocation = 'callback',
 }
 
 Config.DataProviders = {
-  useFrameworkDefaults = true,
-  override = nil,
-  customLoadCharacters = nil,
-  customDeleteCharacter = nil,
-  customGetLastLocation = nil,
-  customGetJob = nil,
+  customLoadCharacters     = nil,
+  customCreateCharacter    = nil,
+  customDeleteCharacter    = nil,
+  customGetLastLocation    = nil,
+  customGetAppearance      = nil,
+  customLoginCharacter     = nil,
+  customGetSlotOverride    = nil,
 }

@@ -4,27 +4,36 @@ lua54 'yes'
 
 name 'cc_multichar'
 author 'charcreation'
-description 'Framework-agnostic (Qbox/QBCore) cinematic character selection'
-version '0.1.0'
+description 'Cinematic multi-character selector for FiveM (Qbox / QBCore / ESX)'
+version '1.0.0'
 
 ui_page 'html/index.html'
 
 files {
   'html/index.html',
-  'html/css/app.css',
-  'html/js/app.js'
+  'html/assets/**/*',
 }
 
 shared_scripts {
   '@oxmysql/lib/MySQL.lua',
-  'config/*.lua',
-  'shared/*.lua'
+  'config/core.lua',
+  'config/scenes.lua',
+  'config/spawn.lua',
+  'config/ui.lua',
+  'config/security.lua',
+  'shared/framework.lua',
 }
 
 client_scripts {
-  'client/*.lua'
+  'client/scene.lua',
+  'client/preview.lua',
+  'client/spawn.lua',
+  'client/main.lua',
 }
 
 server_scripts {
-  'server/*.lua'
+  'server/database.lua',
+  'server/slots.lua',
+  'server/characters.lua',
+  'server/main.lua',
 }

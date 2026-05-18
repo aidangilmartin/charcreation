@@ -1,0 +1,7 @@
+ui/node_modules/
+ui/dist/
+ui/.vite/
+ui/tsconfig.tsbuildinfo
+html/assets/
+*.log
+.DS_Store

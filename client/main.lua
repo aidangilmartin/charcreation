@@ -1,142 +1,181 @@
 local inUI = false
+local sessionCharacters = {}
 
-local function clog(msg)
-  if Config.Debug then
-    print(('[cc_multichar][client] %s'):format(tostring(msg)))
-  end
+local function clog(...)
+  if not Config.Debug then return end
+  local args = { ... }
+  for i = 1, #args do args[i] = tostring(args[i]) end
+  print(('[cc_multichar][client] %s'):format(table.concat(args, ' ')))
 end
-
 
 local function shutdownLoadscreen()
   if GetIsLoadingScreenActive and GetIsLoadingScreenActive() then
     ShutdownLoadingScreenNui()
-    ShutdownLoadingScreen()
+  end
+  ShutdownLoadingScreen()
+end
+
+local function sendUI(action, data)
+  SendNUIMessage({ action = action, data = data })
+end
+
+local function openSelectorWithScene(payload)
+  shutdownLoadscreen()
+  sessionCharacters = payload.characters or {}
+  Scene.Setup()
+  -- Pick a sensible default preview ped
+  local first = sessionCharacters[1]
+  if first then
+    Preview.Spawn(first.gender, nil)
+    TriggerServerEvent('cc_multichar:server:requestPreview', first.cid)
   else
-    ShutdownLoadingScreenNui()
-    ShutdownLoadingScreen()
+    Preview.Spawn('m', nil)
   end
-end
-
-local function loadAnim(dict)
-  if not HasAnimDictLoaded(dict) then
-    RequestAnimDict(dict)
-    while not HasAnimDictLoaded(dict) do Wait(0) end
-  end
-end
-
-local function playScenePreset()
-  local presets = Config.Scene.presets
-  if not presets or #presets == 0 then return end
-  local preset = presets[math.random(1, #presets)]
-
-  DoScreenFadeOut(250)
-  while not IsScreenFadedOut() do Wait(0) end
-
-  local c = preset.interior.coords
-  RequestCollisionAtCoord(c.x, c.y, c.z)
-  SetEntityCoords(PlayerPedId(), c.x, c.y, c.z)
-  FreezeEntityPosition(PlayerPedId(), true)
-  SetEntityVisible(PlayerPedId(), false, false)
-
-  NetworkOverrideClockTime(preset.time.hour, preset.time.minute, 0)
-  SetWeatherTypeNowPersist(preset.weather)
-
-  local camPos = preset.interior.cam
-  local cam = CreateCamWithParams('DEFAULT_SCRIPTED_CAMERA', camPos.x, camPos.y, camPos.z, 0.0, 0.0, preset.interior.heading, 60.0, false, 0)
-  PointCamAtCoord(cam, c.x, c.y, c.z)
-  SetCamActive(cam, true)
-  RenderScriptCams(true, true, 500, true, true)
-
-  local ped = PlayerPedId()
-  local anim = preset.scenario.playerAnims[math.random(1, #preset.scenario.playerAnims)]
-  loadAnim(anim.dict)
-  TaskPlayAnim(ped, anim.dict, anim.name, 4.0, 4.0, -1, 1, 0.0, false, false, false)
-
-  DoScreenFadeIn(450)
+  SetNuiFocus(true, true)
+  inUI = true
+  sendUI('open', payload)
 end
 
 RegisterNetEvent('cc_multichar:client:requestOpen', function()
-  TriggerServerEvent('cc_multichar:server:open')
+  TriggerServerEvent('cc_multichar:server:requestOpen')
 end)
 
-RegisterNetEvent('cc_multichar:client:open', function(payload)
-  shutdownLoadscreen()
-  clog('received open payload; launching selector UI')
-  playScenePreset()
-  SetNuiFocus(true, true)
-  inUI = true
-  SendNUIMessage({ action = 'open', payload = payload, ui = Config.UI })
-  clog(('nui open sent chars=%s'):format(payload and payload.characters and #payload.characters or 0))
+RegisterNetEvent('cc_multichar:client:open', openSelectorWithScene)
+
+RegisterNetEvent('cc_multichar:client:applyPreview', function(data)
+  if not inUI or not data then return end
+  Preview.Spawn(data.gender or 'm', data.appearance)
+end)
+
+RegisterNetEvent('cc_multichar:client:deleteResult', function(result)
+  if result and result.ok then
+    sessionCharacters = result.characters or sessionCharacters
+  end
+  sendUI('deleteResult', result)
+end)
+
+RegisterNetEvent('cc_multichar:client:createResult', function(result)
+  if result and result.ok and result.character then
+    sessionCharacters[#sessionCharacters + 1] = result.character
+    Preview.Spawn(result.character.gender or 'm', nil)
+  end
+  sendUI('createResult', result)
 end)
 
 RegisterNetEvent('cc_multichar:client:openSpawnPicker', function(data)
-  local options = data and data.options or {}
-  clog(('spawn picker opened options=%s'):format(#options))
-  SendNUIMessage({ action = 'spawnPicker', options = options, previewFlyTo = data and data.previewFlyTo })
-end)
-
-RegisterNetEvent('cc_multichar:client:spawnApproved', function(selected)
-  local c = selected and selected.coords
-  if c then
-    DoScreenFadeOut(250)
-    while not IsScreenFadedOut() do Wait(0) end
-    SetEntityVisible(PlayerPedId(), true, false)
-    FreezeEntityPosition(PlayerPedId(), false)
-    clog(('spawn approved at x=%.2f y=%.2f z=%.2f'):format(c.x, c.y, c.z))
-    SetEntityCoords(PlayerPedId(), c.x, c.y, c.z)
-    SetEntityHeading(PlayerPedId(), c.w or 0.0)
-    RenderScriptCams(false, true, 500, true, true)
-    DoScreenFadeIn(350)
+  if not data then return end
+  if data.character then
+    Preview.Spawn(data.character.gender or 'm', data.appearance)
   end
+  sendUI('spawnPicker', data)
 end)
 
-RegisterNetEvent('cc_multichar:client:beginCreator', function(resource, exportName)
-  local ok, err = pcall(function()
-    exports[resource][exportName]()
+RegisterNetEvent('cc_multichar:client:spawnApproved', function(payload)
+  if not payload or not payload.coords then return end
+  sendUI('close', nil)
+  SetNuiFocus(false, false)
+  inUI = false
+  Spawn.Finalize(payload.coords)
+end)
+
+RegisterNetEvent('cc_multichar:client:beginCreator', function(data)
+  if not data or not data.resource or not data.export then return end
+  SetNuiFocus(false, false)
+  inUI = false
+  Preview.Clear()
+  -- Move the live player ped to the scene position so the appearance editor
+  -- has a body to work on.
+  local scene = Scene.Active()
+  if scene then
+    local ped = PlayerPedId()
+    SetEntityCoords(ped, scene.ped.x, scene.ped.y, scene.ped.z, false, false, false, false)
+    SetEntityHeading(ped, scene.ped.w)
+    SetEntityVisible(ped, true, false)
+  end
+
+  local invocation = Config.CharacterCreator.invocation or 'callback'
+
+  CreateThread(function()
+    local exportRef = exports[data.resource][data.export]
+    if not exportRef then
+      clog('appearance export not found:', data.resource, data.export)
+      TriggerServerEvent('cc_multichar:server:appearanceComplete')
+      return
+    end
+
+    if invocation == 'manual' then
+      -- Caller will trigger FinishAppearance themselves.
+      pcall(exportRef)
+      return
+    end
+
+    if invocation == 'callback' then
+      local done = false
+      local ok, err = pcall(function()
+        exportRef(function() done = true end)
+      end)
+      if not ok then
+        clog('appearance callback export failed:', err)
+        done = true
+      end
+      while not done do Wait(100) end
+    else
+      local ok, err = pcall(exportRef)
+      if not ok then clog('appearance blocking export failed:', err) end
+    end
+
+    TriggerServerEvent('cc_multichar:server:appearanceComplete')
   end)
-  if not ok and Config.Debug then
-    print(('Creator export failed: %s'):format(err))
-  end
 end)
+
+RegisterNUICallback('ready', function(_, cb) cb({ ok = true }) end)
 
 RegisterNUICallback('selectCharacter', function(data, cb)
-  clog(('nui selectCharacter cid=%s'):format(tostring(data.cid)))
   TriggerServerEvent('cc_multichar:server:selectCharacter', data.cid)
   cb({ ok = true })
 end)
 
-RegisterNUICallback('deleteCharacter', function(data, cb)
-  clog(('nui deleteCharacter cid=%s tokenLen=%s'):format(tostring(data.cid), tostring(data.token and #data.token or 0)))
-  TriggerServerEvent('cc_multichar:server:deleteCharacter', data.cid, data.token)
+RegisterNUICallback('previewCharacter', function(data, cb)
+  TriggerServerEvent('cc_multichar:server:requestPreview', data.cid)
   cb({ ok = true })
 end)
 
-RegisterNUICallback('createCharacter', function(_, cb)
-  clog('nui createCharacter')
-  TriggerServerEvent('cc_multichar:server:beginCreate')
+RegisterNUICallback('deleteCharacter', function(data, cb)
+  TriggerServerEvent('cc_multichar:server:deleteCharacter', data.cid, data.typedName)
+  cb({ ok = true })
+end)
+
+RegisterNUICallback('createCharacter', function(data, cb)
+  TriggerServerEvent('cc_multichar:server:createCharacter', data.info)
+  cb({ ok = true })
+end)
+
+RegisterNUICallback('beginCreatorAppearance', function(_, cb)
+  TriggerServerEvent('cc_multichar:server:beginCreatorAppearance')
   cb({ ok = true })
 end)
 
 RegisterNUICallback('selectSpawn', function(data, cb)
-  clog(('nui selectSpawn id=%s'):format(tostring(data.spawnId)))
   TriggerServerEvent('cc_multichar:server:selectSpawn', data.spawnId)
   cb({ ok = true })
 end)
 
-RegisterNUICallback('close', function(_, cb)
-  SetNuiFocus(false, false)
-  inUI = false
+RegisterNUICallback('previewSpawn', function(data, cb)
+  if data and data.coords and Config.Spawn.previewFlyTo then
+    Scene.FlyTo(data.coords, Config.Spawn.previewFlyDurationMs)
+  end
   cb({ ok = true })
 end)
 
 CreateThread(function()
-  Wait(2000)
-  TriggerServerEvent('cc_multichar:server:open')
+  if not Config.AutoOpenOnJoin then return end
+  Wait(Config.AutoOpenDelayMs or 1500)
+  TriggerServerEvent('cc_multichar:server:requestOpen')
 end)
 
-
-RegisterNetEvent('cc_multichar:client:debug', function(msg)
-  if Config.Debug then
-    print(('[cc_multichar] %s'):format(tostring(msg)))
-  end
+AddEventHandler('onResourceStop', function(res)
+  if res ~= GetCurrentResourceName() then return end
+  Preview.Clear()
+  Scene.Teardown()
+  SetNuiFocus(false, false)
 end)
