@@ -54,6 +54,18 @@ if CC.IsServer() then
           -- qbx_core fires player:setCardId via Login
           return exports.qbx_core:Login(src, citizenid, newData)
         end,
+        createCharacter = function(src, info, slot)
+          return exports.qbx_core:Login(src, nil, {
+            charinfo = {
+              cid = slot,
+              firstname = info.firstname,
+              lastname = info.lastname,
+              birthdate = info.dob,
+              gender = info.gender == 'f' and 1 or 0,
+              nationality = info.nationality,
+            },
+          })
+        end,
         logout = function(src) return exports.qbx_core:Logout(src) end,
       }
     elseif fw == 'qbcore' then
@@ -71,6 +83,18 @@ if CC.IsServer() then
             return QBCore.Player.Login(src, citizenid)
           end
           return QBCore.Player.Login(src, false, newData)
+        end,
+        createCharacter = function(src, info, slot)
+          return QBCore.Player.Login(src, false, {
+            cid = slot,
+            charinfo = {
+              firstname = info.firstname,
+              lastname = info.lastname,
+              birthdate = info.dob,
+              gender = info.gender == 'f' and 1 or 0,
+              nationality = info.nationality,
+            },
+          })
         end,
         logout = function(src)
           local p = QBCore.Functions.GetPlayer(src)
@@ -92,6 +116,17 @@ if CC.IsServer() then
           -- Real login is handled by your ESX multichar resource via event.
           TriggerEvent('esx:onPlayerJoined', src, citizenid)
         end,
+        createCharacter = function(src, info, slot)
+          local charIdentifier = ('char%s'):format(tostring(slot))
+          TriggerEvent('esx:onPlayerJoined', src, charIdentifier, {
+            firstname = info.firstname,
+            lastname = info.lastname,
+            dateofbirth = info.dob,
+            sex = info.gender,
+            height = tonumber(info.height) or 180,
+          })
+          return true
+        end,
         logout = function(src)
           local xPlayer = ESX.GetPlayerFromId(src)
           if xPlayer then ESX.SavePlayer(xPlayer) end
@@ -106,6 +141,7 @@ if CC.IsServer() then
           end
         end,
         login = function(_, _, _) end,
+        createCharacter = function(_, _, _) return false end,
         logout = function(_) end,
       }
     end

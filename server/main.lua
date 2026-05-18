@@ -200,6 +200,76 @@ local function buildAppearancesFor(src, characters)
   return out
 end
 
+local function nextCreateSlot(session)
+  local used = {}
+  for _, c in ipairs(session.characters or {}) do
+    local slot = tonumber(c.slot or c.cid)
+    if slot then used[slot] = true end
+  end
+  local maxSlots = Slots.For(session.src, session.license)
+  for i = 1, maxSlots do
+    if not used[i] then return i end
+  end
+  return #(session.characters or {}) + 1
+end
+
+local function frameworkCreateData(info, slot)
+  return {
+    cid = slot,
+    firstname = info.firstname,
+    lastname = info.lastname,
+    birthdate = info.dob,
+    dob = info.dob,
+    gender = info.gender == 'f' and 1 or 0,
+    nationality = info.nationality,
+  }
+end
+
+local function closeSelectorForFrameworkCreate(src, session)
+  session.state = STATE.FINISHED
+  session.selectedCid = nil
+  session.pendingCharacter = nil
+  session.allowedSpawns = {}
+  Instance.Leave(src)
+end
+
+local function tryFrameworkCreate(src, session, info)
+  if type(Config.DataProviders.customCreateCharacter) == 'function' then return false end
+
+  local fw = CC.DetectFramework()
+  if fw ~= 'qbox' and fw ~= 'qbcore' and fw ~= 'esx' then return false end
+
+  local slot = nextCreateSlot(session)
+  local adapter = CC.Adapter()
+
+  if fw == 'qbcore' and GetResourceState('qb-multicharacter') == 'started' then
+    closeSelectorForFrameworkCreate(src, session)
+    TriggerClientEvent('cc_multichar:client:frameworkCreate', src, {
+      framework = fw,
+      event = 'qb-multicharacter:server:createCharacter',
+      data = frameworkCreateData(info, slot),
+    })
+    audit('create_framework', src, ('qbcore slot=%s via qb-multicharacter'):format(tostring(slot)))
+    return true
+  end
+
+  if not adapter or type(adapter.createCharacter) ~= 'function' then return false end
+
+  closeSelectorForFrameworkCreate(src, session)
+  TriggerClientEvent('cc_multichar:client:frameworkCreateStarted', src)
+  Wait(250)
+
+  local ok, created = pcall(adapter.createCharacter, src, info, slot)
+  if not ok or created == false then
+    audit('create_framework_failed', src, ('framework=%s slot=%s'):format(tostring(fw), tostring(slot)))
+    TriggerClientEvent('cc_multichar:client:createResult', src, { ok = false, reason = 'create_failed' })
+    return true
+  end
+
+  audit('create_framework', src, ('%s slot=%s'):format(tostring(fw), tostring(slot)))
+  return true
+end
+
 local function openSelector(src)
   if not ServerReady then audit('blocked', src, 'server not ready'); return end
   local s = ensureSession(src)
@@ -444,6 +514,10 @@ RegisterNetEvent('cc_multichar:server:createCharacter', function(info)
   local slots = Slots.For(src, s.license)
   if #(s.characters or {}) >= slots then
     TriggerClientEvent('cc_multichar:client:createResult', src, { ok = false, reason = 'slots_full' })
+    return
+  end
+
+  if tryFrameworkCreate(src, s, info) then
     return
   end
 

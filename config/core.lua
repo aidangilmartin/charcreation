@@ -109,9 +109,10 @@ Config.Appearance = {
 -- =============================================================================
 -- Character creator handoff
 -- =============================================================================
--- After the create form (name/DOB/gender/nationality) is submitted we hand
--- control to an external appearance editor for face & clothing. The editor
--- finishes asynchronously, then we resume with the spawn picker.
+-- Framework-backed installs (Qbox/QBCore/ESX) hand new-character creation to
+-- the active framework immediately after the create form is submitted. This
+-- section is the fallback for standalone/custom data providers that still need
+-- this resource to open an external appearance editor for face & clothing.
 --
 -- invocation
 --   'callback' (Recommended for illenium-appearance, fivem-appearance):

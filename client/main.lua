@@ -123,6 +123,27 @@ RegisterNetEvent('cc_multichar:client:createResult', function(result)
   sendUI('createResult', result)
 end)
 
+local function closeSelectorForFrameworkCreate()
+  sendUI('close', nil)
+  SetNuiFocus(false, false)
+  inUI = false
+  introSkipThread = introSkipThread + 1
+  Hover.Stop()
+  Scenarios.Stop()
+  Scene.ShowPlayerPed()
+  clearDiscordPresence()
+end
+
+RegisterNetEvent('cc_multichar:client:frameworkCreateStarted', function()
+  closeSelectorForFrameworkCreate()
+end)
+
+RegisterNetEvent('cc_multichar:client:frameworkCreate', function(payload)
+  if not payload or not payload.event or not payload.data then return end
+  closeSelectorForFrameworkCreate()
+  TriggerServerEvent(payload.event, payload.data)
+end)
+
 RegisterNetEvent('cc_multichar:client:openSpawnPicker', function(data)
   if not data then return end
   sendUI('spawnPicker', data)
