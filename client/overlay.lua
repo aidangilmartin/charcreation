@@ -8,8 +8,17 @@ local visible = false
 local fpsSamples = {}
 local recentNet = {}
 
+local function timestamp()
+  local ms = GetGameTimer and GetGameTimer() or 0
+  local totalSeconds = math.floor(ms / 1000)
+  local hours = math.floor(totalSeconds / 3600) % 100
+  local minutes = math.floor(totalSeconds / 60) % 60
+  local seconds = totalSeconds % 60
+  return ('%02d:%02d:%02d'):format(hours, minutes, seconds)
+end
+
 local function pushNet(line)
-  recentNet[#recentNet + 1] = ('%s | %s'):format(os.date('%H:%M:%S'), line)
+  recentNet[#recentNet + 1] = ('%s | %s'):format(timestamp(), line)
   while #recentNet > 5 do table.remove(recentNet, 1) end
 end
 
