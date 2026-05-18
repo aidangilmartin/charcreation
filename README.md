@@ -2,13 +2,17 @@
 
 Cinematic multicharacter selector for FiveM with automatic Qbox/QBCore detection and config-first setup.
 
-## Highlights
-- Fullscreen modern minimal NUI.
-- Config-driven slots, scenarios, spawn locations, and security.
-- Random immersive scenario preset on load.
-- Server-issued delete token validation.
-- Spawn picker hook and creator export handoff.
-- Compatibility shim switch for legacy integrations.
+## Stable release checklist (v1)
+- Ensure `oxmysql` is started **or** implement `Config.DataProviders.customLoadCharacters`.
+- Verify `Config.Security`, `Config.Slots`, and `Config.Spawn` are valid; strict mode blocks unsafe startup.
+- Set character creator export in `config/core.lua`.
+- Validate spawn points and last-location handling in your DB schema.
+
+## Runtime behavior
+- Server-authoritative character selection/spawn approval.
+- Token-validated character delete with ownership check (`citizenid + license`).
+- Rate-limit protection and audit logging hooks.
+- Cleanup on player drop and resource stop.
 
 ## Config files
 - `config/core.lua`
@@ -18,4 +22,4 @@ Cinematic multicharacter selector for FiveM with automatic Qbox/QBCore detection
 - `config/security.lua`
 
 ## Notes
-This scaffold provides architecture and secure flow points. Wire DB queries and ownership checks in `server/main.lua` before production.
+- Angular NUI is currently loaded from `esm.sh`; for full production hardening, bundle Angular locally in resource files.

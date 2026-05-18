@@ -49,8 +49,23 @@ RegisterNetEvent('cc_multichar:client:open', function(payload)
   SendNUIMessage({ action = 'open', payload = payload, ui = Config.UI })
 end)
 
-RegisterNetEvent('cc_multichar:client:openSpawnPicker', function()
-  SendNUIMessage({ action = 'spawnPicker', options = Config.Spawn })
+RegisterNetEvent('cc_multichar:client:openSpawnPicker', function(data)
+  local options = data and data.options or {}
+  SendNUIMessage({ action = 'spawnPicker', options = options, previewFlyTo = data and data.previewFlyTo })
+end)
+
+RegisterNetEvent('cc_multichar:client:spawnApproved', function(selected)
+  local c = selected and selected.coords
+  if c then
+    DoScreenFadeOut(250)
+    while not IsScreenFadedOut() do Wait(0) end
+    SetEntityVisible(PlayerPedId(), true, false)
+    FreezeEntityPosition(PlayerPedId(), false)
+    SetEntityCoords(PlayerPedId(), c.x, c.y, c.z)
+    SetEntityHeading(PlayerPedId(), c.w or 0.0)
+    RenderScriptCams(false, true, 500, true, true)
+    DoScreenFadeIn(350)
+  end
 end)
 
 RegisterNetEvent('cc_multichar:client:beginCreator', function(resource, exportName)
@@ -74,6 +89,11 @@ end)
 
 RegisterNUICallback('createCharacter', function(_, cb)
   TriggerServerEvent('cc_multichar:server:beginCreate')
+  cb({ ok = true })
+end)
+
+RegisterNUICallback('selectSpawn', function(data, cb)
+  TriggerServerEvent('cc_multichar:server:selectSpawn', data.spawnId)
   cb({ ok = true })
 end)
 

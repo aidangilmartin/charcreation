@@ -4,15 +4,14 @@ Config.Framework = 'auto' -- auto | qbox | qbcore
 Config.Debug = false
 Config.EnableCompatShim = true
 
+Config.Release = {
+  strictMode = true,
+}
+
 Config.Slots = {
   default = 4,
-  byLicense = {
-    -- ['license:xxxxxxxx'] = 6,
-  },
-  byGroup = {
-    -- admin = 8,
-    -- mod = 6,
-  }
+  byLicense = {},
+  byGroup = {}
 }
 
 Config.CharacterCreation = {
@@ -22,7 +21,15 @@ Config.CharacterCreation = {
   }
 }
 
+Config.Database = {
+  adapter = 'oxmysql', -- oxmysql | custom
+}
+
 Config.DataProviders = {
   useFrameworkDefaults = true,
-  -- override = function(src, character) return { bank = 0, cash = 0, playtime = 0, job = 'Unemployed' } end
+  override = nil,
+  customLoadCharacters = nil,
+  customDeleteCharacter = nil,
+  customGetLastLocation = nil,
+  customGetJob = nil,
 }
