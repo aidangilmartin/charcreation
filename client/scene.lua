@@ -190,7 +190,7 @@ local function getTrackTarget(target, ctx)
         return GetEntityCoords(veh)
       end
     elseif target:sub(1, 5) == 'role:' then
-      local p = ctx.roleHeroPed
+      local p = ctx.roles[target:sub(6)]
       if p and DoesEntityExist(p) then return GetEntityCoords(p) end
     end
   end

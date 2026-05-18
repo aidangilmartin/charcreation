@@ -5,13 +5,13 @@
 - [ ] `oxmysql` is started before `cc_multichar` in `server.cfg`.
 - [ ] `Config.Database.adapter` matches your install (`oxmysql` or `custom`).
 - [ ] `Config.CharacterCreator` points at a real `(resource, export)` pair that opens your appearance editor.
-- [ ] `Config.Scenes.scenes` reviewed; coordinates safe and stable.
+- [ ] `Config.Scenarios.scenarios` reviewed; coordinates safe and stable.
 - [ ] `Config.Spawn.staticPoints` (and optional apartments) reviewed.
 - [ ] If using ESX, confirm multichar identifier-suffix convention or wire a custom data provider.
 
 ## Smoke test
 - [ ] Selector opens after connect with the correct character count and slot count.
-- [ ] Selecting a different card swaps the in-world preview ped (with their clothing if configured).
+- [ ] Clicking a different scene character selects that ped (with their clothing if configured).
 - [ ] Empty-slot click opens the create form; submitting hands off to the appearance editor; finishing returns to spawn picker.
 - [ ] Spawn picker fly-to preview animates between options when `previewFlyTo = true`.
 - [ ] Selecting a spawn fades, finalizes the framework login, and drops the player at the right coords.

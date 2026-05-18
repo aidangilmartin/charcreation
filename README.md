@@ -36,7 +36,7 @@ Cinematic multi-character selector for FiveM. Auto-detects **Qbox**, **QBCore**,
 | File | Purpose |
 | --- | --- |
 | `config/core.lua` | Framework override, slots precedence, appearance/creator exports, data provider hooks |
-| `config/scenes.lua` | Cinematic scene presets (location, camera, animation, weather, time) |
+| `config/scenarios.lua` | Cinematic scene presets (location, camera, animation, weather, time) |
 | `config/spawn.lua` | Static spawn points, apartments, job spawns, last-location toggle |
 | `config/ui.lua` | Theme colors, displayed fields, validation rules, text strings |
 | `config/security.lua` | Rate limits, audit logging |

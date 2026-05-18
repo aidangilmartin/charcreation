@@ -206,6 +206,17 @@ export function App() {
     [busy],
   );
 
+  const onPreviewSpawn = useCallback(
+    (spawn: SpawnOption) => {
+      if (spawnData?.previewFlyTo === false) return;
+      nuiPost('previewSpawn', {
+        coords: spawn.coords,
+        durationMs: spawnData?.previewFlyDurationMs,
+      });
+    },
+    [spawnData],
+  );
+
   const onCloseSelection = useCallback(() => {
     setSelectedCid(null);
     nuiPost('clearSelection');
@@ -291,7 +302,7 @@ export function App() {
           data={spawnData}
           disabled={busy}
           onSelect={onSelectSpawn}
-          onPreview={() => {}}
+          onPreview={onPreviewSpawn}
         />
       )}
 
