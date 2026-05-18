@@ -271,6 +271,50 @@ Config.IntroSkip = {
 }
 
 -- =============================================================================
+-- Private instance (routing bucket isolation)
+-- =============================================================================
+-- While the selector is open the player is moved into a dedicated routing
+-- bucket. Effects:
+--   - Other players cannot see the cinematic scene (peds, vehicles, props).
+--   - Other players cannot see the player ped or their blip.
+--   - With populationEnabled=false, ambient world traffic is suppressed in
+--     the bucket so no NPC sedans drive through the police chase scene.
+--
+-- enabled
+--   Master toggle. When false, players stay in their current bucket and
+--   nearby players may see scene entities. Recommended: true.
+--
+-- bucketOffset
+--   Buckets are allocated sequentially starting at this value. Choose a
+--   number high enough to not collide with other resources that use
+--   routing buckets (e.g. mlo loaders, properties, gangs). Default 100000.
+--
+-- populationEnabled
+--   When false, suppresses NPC + vehicle population in the bucket.
+--   Strongly recommended for cinematic clarity. Default false.
+--
+-- entityLockdown
+--   GTA routing-bucket entity lockdown mode for the bucket:
+--     'inactive' (default): no extra restrictions
+--     'relaxed'           : only the bucket's owner can create networked entities
+--     'strict'            : no networked entity creation at all
+--   For a cinematic selector with only LOCAL entities, 'inactive' is fine.
+--   Set 'strict' if you want a belt-and-suspenders guarantee that nothing
+--   leaks out of the bucket. Default 'inactive'.
+--
+-- restoreToBucketOnSpawn
+--   Bucket the player is moved to when they finalize spawn. 0 (default)
+--   is the main world. Override to a custom bucket if your server runs
+--   tiered shards / instances.
+Config.RoutingBucket = {
+  enabled = true,
+  bucketOffset = 100000,
+  populationEnabled = false,
+  entityLockdown = 'inactive',
+  restoreToBucketOnSpawn = 0,
+}
+
+-- =============================================================================
 -- Extended stats panel
 -- =============================================================================
 -- Toggles which rows appear on the character panel after click-selection.

@@ -199,13 +199,20 @@ local function openSelector(src)
   local scenarioId = pickScenarioId(#characters)
   local appearances = buildAppearancesFor(src, characters)
   t()
-  Log.info('selector', 'open src=%s chars=%d slots=%d scenario=%s', src, #characters, slots, scenarioId)
+
+  -- Move the player into their private routing bucket before sending the
+  -- open payload, so by the time the client spawns scene entities they're
+  -- already isolated from the main world.
+  local bucket = Instance.Enter(src)
+
+  Log.info('selector', 'open src=%s chars=%d slots=%d scenario=%s bucket=%s', src, #characters, slots, scenarioId, tostring(bucket))
   TriggerClientEvent('cc_multichar:client:open', src, {
     framework = CC.DetectFramework(),
     characters = characters,
     appearances = appearances,
     slots = slots,
     scenarioId = scenarioId,
+    bucket = bucket,
     ui = Config.UI,
     sceneTimings = Config.SceneTimings,
   })
@@ -311,6 +318,10 @@ RegisterNetEvent('cc_multichar:server:selectSpawn', function(spawnId)
   else
     adapter.login(src, char.cid)
   end
+
+  -- Restore the player's routing bucket BEFORE telling the client to teleport,
+  -- so they materialize in the main world (not the private selector instance).
+  Instance.Leave(src)
 
   s.state = STATE.FINISHED
   TriggerClientEvent('cc_multichar:client:spawnApproved', src, {

@@ -39,5 +39,6 @@ server_scripts {
   'server/database.lua',
   'server/slots.lua',
   'server/characters.lua',
+  'server/instance.lua',
   'server/main.lua',
 }

@@ -5,12 +5,14 @@ Cinematic multi-character selector for FiveM. Auto-detects **Qbox**, **QBCore**,
 ## Features
 
 - Multi-framework adapter (Qbox / QBCore / ESX / standalone via data providers)
-- Cinematic random rotating scenes with live ped preview in-world
-- Spawn picker (last location, apartments, static points, job points)
+- Cinematic ensemble scenes (BBQ, fishing, mechanic, hospital, drug deal, robbery, police chase, drive-by) with all of the player's characters appearing in-world
+- Click on a character ped in the scene to select; spawn picker afterwards (last location, apartments, static points, job points)
+- **Private routing-bucket instance** — no one else sees the cinematic scene or your character peds; ambient world traffic is suppressed for cinematic clarity
 - Built-in name/DOB/gender/nationality create form, then hands off to an appearance editor (illenium-appearance / qb-clothing / your custom export)
 - Slot count resolved from: config default → ace permission tier → per-license DB override
-- Type-to-confirm character deletion
-- Server-authoritative selection, rate limiting, audit logging (with optional Discord webhook)
+- Ambient SFX per scenario, Discord rich presence (selector phase), /switch command with safe-zone gating + cooldown, hold-to-skip cinematic intro, extended stats panel (playtime, K/D, vehicles, properties, citations)
+- Structured logger with per-category levels, file + Discord webhook sinks, slow-query timing, and an in-game debug overlay
+- Server-authoritative selection, rate limiting, audit logging
 
 ## Install
 
