@@ -1,5 +1,11 @@
 local inUI = false
 
+local function clog(msg)
+  if Config.Debug then
+    print(('[cc_multichar][client] %s'):format(tostring(msg)))
+  end
+end
+
 
 local function shutdownLoadscreen()
   if GetIsLoadingScreenActive and GetIsLoadingScreenActive() then
@@ -55,14 +61,17 @@ end)
 
 RegisterNetEvent('cc_multichar:client:open', function(payload)
   shutdownLoadscreen()
+  clog('received open payload; launching selector UI')
   playScenePreset()
   SetNuiFocus(true, true)
   inUI = true
   SendNUIMessage({ action = 'open', payload = payload, ui = Config.UI })
+  clog(('nui open sent chars=%s'):format(payload and payload.characters and #payload.characters or 0))
 end)
 
 RegisterNetEvent('cc_multichar:client:openSpawnPicker', function(data)
   local options = data and data.options or {}
+  clog(('spawn picker opened options=%s'):format(#options))
   SendNUIMessage({ action = 'spawnPicker', options = options, previewFlyTo = data and data.previewFlyTo })
 end)
 
@@ -73,6 +82,7 @@ RegisterNetEvent('cc_multichar:client:spawnApproved', function(selected)
     while not IsScreenFadedOut() do Wait(0) end
     SetEntityVisible(PlayerPedId(), true, false)
     FreezeEntityPosition(PlayerPedId(), false)
+    clog(('spawn approved at x=%.2f y=%.2f z=%.2f'):format(c.x, c.y, c.z))
     SetEntityCoords(PlayerPedId(), c.x, c.y, c.z)
     SetEntityHeading(PlayerPedId(), c.w or 0.0)
     RenderScriptCams(false, true, 500, true, true)
@@ -90,21 +100,25 @@ RegisterNetEvent('cc_multichar:client:beginCreator', function(resource, exportNa
 end)
 
 RegisterNUICallback('selectCharacter', function(data, cb)
+  clog(('nui selectCharacter cid=%s'):format(tostring(data.cid)))
   TriggerServerEvent('cc_multichar:server:selectCharacter', data.cid)
   cb({ ok = true })
 end)
 
 RegisterNUICallback('deleteCharacter', function(data, cb)
+  clog(('nui deleteCharacter cid=%s tokenLen=%s'):format(tostring(data.cid), tostring(data.token and #data.token or 0)))
   TriggerServerEvent('cc_multichar:server:deleteCharacter', data.cid, data.token)
   cb({ ok = true })
 end)
 
 RegisterNUICallback('createCharacter', function(_, cb)
+  clog('nui createCharacter')
   TriggerServerEvent('cc_multichar:server:beginCreate')
   cb({ ok = true })
 end)
 
 RegisterNUICallback('selectSpawn', function(data, cb)
+  clog(('nui selectSpawn id=%s'):format(tostring(data.spawnId)))
   TriggerServerEvent('cc_multichar:server:selectSpawn', data.spawnId)
   cb({ ok = true })
 end)
@@ -118,4 +132,11 @@ end)
 CreateThread(function()
   Wait(2000)
   TriggerServerEvent('cc_multichar:server:open')
+end)
+
+
+RegisterNetEvent('cc_multichar:client:debug', function(msg)
+  if Config.Debug then
+    print(('[cc_multichar] %s'):format(tostring(msg)))
+  end
 end)

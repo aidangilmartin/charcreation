@@ -3,6 +3,12 @@ local ServerReady = true
 
 local function nowMs() return GetGameTimer() end
 
+local function dlog(msg)
+  if Config.Debug then
+    print(('[cc_multichar][debug] %s'):format(tostring(msg)))
+  end
+end
+
 local function audit(event, src, message)
   local cfg = Config.Security and Config.Security.audit
   if not cfg or not cfg.enabled then return end
@@ -48,7 +54,7 @@ end
 
 local function ensureSession(src)
   local id = CC.GetIdentifier(src)
-  Sessions[src] = Sessions[src] or { identifier = id, state = 'idle', deleteToken = nil, deleteTokenExpiry = 0, selectedCid = nil, allowedSpawns = {} }
+  Sessions[src] = Sessions[src] or { identifier = id, state = 'idle', deleteToken = nil, deleteTokenExpiry = 0, selectedCid = nil, allowedSpawns = {}, characters = {} }
   return Sessions[src]
 end
 
@@ -83,6 +89,7 @@ end
 
 local function buildCharacters(src)
   local s = ensureSession(src)
+  dlog(('open requested src=%s state=%s id=%s'):format(src, tostring(s.state), tostring(s.identifier)))
   if type(Config.DataProviders.customLoadCharacters) == 'function' then
     return Config.DataProviders.customLoadCharacters(src, s.identifier) or {}
   end
@@ -134,42 +141,53 @@ RegisterNetEvent('cc_multichar:server:open', function()
   s.deleteToken = randomToken(Config.Security.tokenLength)
   s.deleteTokenExpiry = os.time() + Config.Security.tokenTTLSeconds
   s.state = 'selecting'
-  TriggerClientEvent('cc_multichar:client:open', src, { framework=CC.DetectFramework(), token=s.deleteToken, characters=buildCharacters(src), slots=Config.Slots.default })
+  local characters = buildCharacters(src)
+  dlog(('open built characters src=%s count=%s'):format(src, #characters))
+  s.characters = characters
+  TriggerClientEvent('cc_multichar:client:open', src, { framework=CC.DetectFramework(), token=s.deleteToken, characters=characters, slots=Config.Slots.default })
 end)
 
 RegisterNetEvent('cc_multichar:server:selectCharacter', function(cid)
   local src = source
   if not ServerReady or not eventAllowed(src,'selectCharacter') then return end
-  local s = ensureSession(src); if s.state ~= 'selecting' then return end
-  local chars = buildCharacters(src)
+  local s = ensureSession(src); if s.state ~= 'selecting' then dlog(('selectCharacter blocked bad state src=%s state=%s'):format(src, tostring(s.state))); return end
+  local chars = s.characters or {}
+  if #chars == 0 then
+    chars = buildCharacters(src)
+    s.characters = chars
+  end
   local found = false
   for i=1,#chars do if tostring(chars[i].cid)==tostring(cid) then found=true break end end
-  if not found then audit('invalid_cid',src,cid); return end
+  if not found then dlog(('selectCharacter cid not found src=%s cid=%s cached=%s'):format(src, tostring(cid), #chars)); audit('invalid_cid',src,cid); return end
   s.selectedCid = tostring(cid); s.state='spawn_select'
-  TriggerClientEvent('cc_multichar:client:openSpawnPicker', src, { options=buildSpawnOptions(s), previewFlyTo=Config.Spawn.previewFlyTo })
+  local options = buildSpawnOptions(s)
+  dlog(('selectCharacter spawn options src=%s count=%s'):format(src, #options))
+  if #options == 0 then audit('no_spawns', src, 'no spawn options configured'); return end
+  TriggerClientEvent('cc_multichar:client:openSpawnPicker', src, { options=options, previewFlyTo=Config.Spawn.previewFlyTo })
 end)
 
 RegisterNetEvent('cc_multichar:server:selectSpawn', function(spawnId)
   local src = source
   if not ServerReady or not eventAllowed(src,'selectSpawn') then return end
-  local s = ensureSession(src); if s.state ~= 'spawn_select' then return end
+  local s = ensureSession(src); if s.state ~= 'spawn_select' then dlog(('selectSpawn blocked bad state src=%s state=%s'):format(src, tostring(s.state))); return end
   local selected
   for i=1,#s.allowedSpawns do if s.allowedSpawns[i].id == spawnId then selected=s.allowedSpawns[i] break end end
-  if not selected then audit('invalid_spawn',src,spawnId); return end
-  if selected.id == 'last' then local loc = getLastLocation(s.selectedCid); if not loc then return end; selected = { id='last', label='Last Location', coords=loc, kind='last' } end
-  s.state='finished'; TriggerClientEvent('cc_multichar:client:spawnApproved', src, selected)
+  if not selected then dlog(('selectSpawn invalid src=%s spawnId=%s allowed=%s'):format(src, tostring(spawnId), #s.allowedSpawns)); audit('invalid_spawn',src,spawnId); return end
+  if selected.id == 'last' then local loc = getLastLocation(s.selectedCid); if not loc then dlog(('selectSpawn last location missing src=%s cid=%s'):format(src, tostring(s.selectedCid))); return end; selected = { id='last', label='Last Location', coords=loc, kind='last' } end
+  s.state='finished'; dlog(('spawn approved src=%s spawn=%s'):format(src, tostring(selected.id))); TriggerClientEvent('cc_multichar:client:spawnApproved', src, selected)
 end)
 
 RegisterNetEvent('cc_multichar:server:deleteCharacter', function(cid, token)
   local src = source
   if not ServerReady or not eventAllowed(src,'deleteCharacter') then return end
-  local s = ensureSession(src); if s.state ~= 'selecting' then return end
-  if tostring(token or '') ~= tostring(s.deleteToken or '') or os.time() > s.deleteTokenExpiry then audit('token_fail',src,cid); return end
+  local s = ensureSession(src); if s.state ~= 'selecting' then dlog(('delete blocked bad state src=%s state=%s'):format(src, tostring(s.state))); return end
+  if tostring(token or '') ~= tostring(s.deleteToken or '') or os.time() > s.deleteTokenExpiry then dlog(('delete token fail src=%s cid=%s supplied=%s expected=%s expiry=%s now=%s'):format(src, tostring(cid), tostring(token), tostring(s.deleteToken), tostring(s.deleteTokenExpiry), tostring(os.time()))); audit('token_fail',src,cid); return end
   local ok = false
   if type(Config.DataProviders.customDeleteCharacter) == 'function' then ok = Config.DataProviders.customDeleteCharacter(src, s.identifier, tostring(cid)) == true
   else ok = execute('DELETE FROM players WHERE citizenid = ? AND license = ?', { tostring(cid), s.identifier }) > 0 end
-  if not ok then audit('delete_fail',src,cid); return end
+  if not ok then dlog(('delete failed src=%s cid=%s id=%s'):format(src, tostring(cid), tostring(s.identifier))); audit('delete_fail',src,cid); return end
   s.deleteToken=nil; s.deleteTokenExpiry=0
+  dlog(('delete success src=%s cid=%s'):format(src, tostring(cid)))
   TriggerClientEvent('cc_multichar:client:deletedCharacter', src, tostring(cid))
 end)
 
