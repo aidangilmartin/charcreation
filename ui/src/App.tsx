@@ -9,13 +9,13 @@ import type {
   SpawnPickerPayload,
   UIConfig,
 } from './types';
-import { CharacterList } from './components/CharacterList';
-import { DetailsPanel } from './components/DetailsPanel';
 import { CreateForm } from './components/CreateForm';
 import { DeleteConfirm } from './components/DeleteConfirm';
 import { SpawnPicker } from './components/SpawnPicker';
+import { SceneOverlay } from './components/SceneOverlay';
+import { CharacterPanel } from './components/CharacterPanel';
 
-type Screen = 'select' | 'create' | 'spawn';
+type Modal = 'none' | 'create' | 'delete' | 'spawn';
 
 const defaultUI: UIConfig = {
   serverName: '',
@@ -50,12 +50,12 @@ export function App() {
   const [ui, setUI] = useState<UIConfig>(defaultUI);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [slots, setSlots] = useState(0);
-  const [activeCid, setActiveCid] = useState<string | null>(null);
-  const [screen, setScreen] = useState<Screen>('select');
-  const [deletingCid, setDeletingCid] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [createError, setCreateError] = useState<string | null>(null);
+  const [hoveredCid, setHoveredCid] = useState<string | null>(null);
+  const [selectedCid, setSelectedCid] = useState<string | null>(null);
+  const [modal, setModal] = useState<Modal>('none');
   const [spawnData, setSpawnData] = useState<SpawnPickerPayload | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -67,19 +67,25 @@ export function App() {
         }
         setCharacters(payload.characters || []);
         setSlots(payload.slots ?? 0);
-        setActiveCid(payload.characters?.[0]?.cid ?? null);
-        setScreen('select');
-        setDeletingCid(null);
-        setDeleteError(null);
+        setHoveredCid(null);
+        setSelectedCid(null);
+        setModal('none');
         setCreateError(null);
+        setDeleteError(null);
         setVisible(true);
         nuiPost('ready');
+      }),
+      onMessage('hovered', (data: { cid: string | null }) => {
+        setHoveredCid(data?.cid ?? null);
+      }),
+      onMessage('selected', (data: { cid: string | null; character?: Character }) => {
+        setSelectedCid(data?.cid ?? null);
       }),
       onMessage('deleteResult', (result: DeleteResult) => {
         if (result?.ok) {
           setCharacters(result.characters);
-          setActiveCid(result.characters[0]?.cid ?? null);
-          setDeletingCid(null);
+          setSelectedCid(null);
+          setModal('none');
           setDeleteError(null);
         } else {
           setDeleteError(
@@ -91,10 +97,9 @@ export function App() {
       onMessage('createResult', (result: CreateResult) => {
         if (result?.ok) {
           setCharacters((prev) => [...prev, result.character]);
-          setActiveCid(result.character.cid);
-          setScreen('select');
+          setSelectedCid(result.character.cid);
+          setModal('none');
           setCreateError(null);
-          // Hand off to in-game appearance editor next
           nuiPost('beginCreatorAppearance');
         } else {
           setCreateError(reasonText(result?.reason));
@@ -103,54 +108,53 @@ export function App() {
       }),
       onMessage('spawnPicker', (data: SpawnPickerPayload) => {
         setSpawnData(data);
-        setScreen('spawn');
+        setModal('spawn');
         setBusy(false);
       }),
       onMessage('close', () => {
         setVisible(false);
         setSpawnData(null);
+        setModal('none');
       }),
     ];
     return () => off.forEach((fn) => fn());
   }, []);
 
-  const activeCharacter = useMemo(
-    () => characters.find((c) => c.cid === activeCid) ?? null,
-    [characters, activeCid],
+  const selectedCharacter = useMemo(
+    () => characters.find((c) => c.cid === selectedCid) ?? null,
+    [characters, selectedCid],
   );
 
-  const onSelect = useCallback((c: Character) => {
-    setActiveCid(c.cid);
-    setDeletingCid(null);
-    setDeleteError(null);
-    nuiPost('previewCharacter', { cid: c.cid });
-  }, []);
+  const hoveredCharacter = useMemo(
+    () => characters.find((c) => c.cid === hoveredCid) ?? null,
+    [characters, hoveredCid],
+  );
 
   const onPlay = useCallback(() => {
-    if (!activeCharacter || busy) return;
+    if (!selectedCharacter || busy) return;
     setBusy(true);
-    nuiPost('selectCharacter', { cid: activeCharacter.cid });
-  }, [activeCharacter, busy]);
-
-  const onCreateRequest = useCallback(() => {
-    setCreateError(null);
-    setScreen('create');
-  }, []);
+    nuiPost('playCharacter', { cid: selectedCharacter.cid });
+  }, [selectedCharacter, busy]);
 
   const onDeleteRequest = useCallback(() => {
-    if (!activeCharacter) return;
+    if (!selectedCharacter) return;
     setDeleteError(null);
-    setDeletingCid(activeCharacter.cid);
-  }, [activeCharacter]);
+    setModal('delete');
+  }, [selectedCharacter]);
 
   const onConfirmDelete = useCallback(
     (typedName: string) => {
-      if (!activeCharacter || busy) return;
+      if (!selectedCharacter || busy) return;
       setBusy(true);
-      nuiPost('deleteCharacter', { cid: activeCharacter.cid, typedName });
+      nuiPost('deleteCharacter', { cid: selectedCharacter.cid, typedName });
     },
-    [activeCharacter, busy],
+    [selectedCharacter, busy],
   );
+
+  const onCreateRequest = useCallback(() => {
+    setCreateError(null);
+    setModal('create');
+  }, []);
 
   const onSubmitCreate = useCallback(
     (info: { firstname: string; lastname: string; dob: string; gender: string; nationality: string }) => {
@@ -170,68 +174,80 @@ export function App() {
     [busy],
   );
 
-  const onPreviewSpawn = useCallback((spawn: SpawnOption) => {
-    if (!spawnData?.previewFlyTo) return;
-    nuiPost('previewSpawn', { coords: spawn.coords });
-  }, [spawnData]);
+  const onCloseSelection = useCallback(() => {
+    setSelectedCid(null);
+    nuiPost('clearSelection');
+  }, []);
 
   if (!visible) return null;
 
+  const sceneEnabled = modal === 'none';
+  const showCreate = slots > characters.length;
+
   return (
     <div className="cc-root">
+      <SceneOverlay
+        enabled={sceneEnabled}
+        hoveredName={
+          sceneEnabled && hoveredCharacter && hoveredCharacter.cid !== selectedCid
+            ? hoveredCharacter.name
+            : null
+        }
+      />
+
       <header className="cc-header">
         <div className="cc-server-name">{ui.serverName}</div>
         <div className="cc-server-tag">{ui.serverTagline}</div>
+        {sceneEnabled && characters.length > 0 && !selectedCharacter && (
+          <div className="cc-hint">Click a character in the scene to select them</div>
+        )}
       </header>
 
-      {screen === 'select' && (
-        <div className="cc-layout">
-          <CharacterList
-            characters={characters}
-            slots={slots}
-            activeCid={activeCid}
-            text={ui.text}
-            onSelect={onSelect}
-            onCreate={onCreateRequest}
-          />
-          <DetailsPanel
-            ui={ui}
-            character={activeCharacter}
-            disabled={busy}
-            onPlay={onPlay}
-            onDelete={onDeleteRequest}
-          />
-        </div>
+      {showCreate && sceneEnabled && (
+        <button className="cc-create-btn" onClick={onCreateRequest} disabled={busy}>
+          + {ui.text.createButton || 'Create Character'}
+        </button>
       )}
 
-      {screen === 'create' && (
+      {selectedCharacter && sceneEnabled && (
+        <CharacterPanel
+          ui={ui}
+          character={selectedCharacter}
+          disabled={busy}
+          onPlay={onPlay}
+          onDelete={onDeleteRequest}
+          onClose={onCloseSelection}
+        />
+      )}
+
+      {modal === 'create' && (
         <CreateForm
           ui={ui}
           error={createError}
           disabled={busy}
-          onCancel={() => setScreen('select')}
+          onCancel={() => setModal('none')}
           onSubmit={onSubmitCreate}
         />
       )}
 
-      {screen === 'spawn' && spawnData && (
+      {modal === 'spawn' && spawnData && (
         <SpawnPicker
           ui={ui}
           data={spawnData}
           disabled={busy}
           onSelect={onSelectSpawn}
-          onPreview={onPreviewSpawn}
+          onPreview={() => {}}
         />
       )}
 
-      {deletingCid && activeCharacter && (
+      {modal === 'delete' && selectedCharacter && (
         <DeleteConfirm
           ui={ui}
-          character={activeCharacter}
+          character={selectedCharacter}
           error={deleteError}
           disabled={busy}
           onCancel={() => {
-            setDeletingCid(null);
+            setModal('none');
             setDeleteError(null);
           }}
           onConfirm={onConfirmDelete}

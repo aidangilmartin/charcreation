@@ -143,6 +143,44 @@ local function buildSpawnOptions(session, character)
   return options
 end
 
+local function pickScenarioId(characterCount)
+  local pool = Config.Scenarios.scenarios or {}
+  if characterCount == 0 then
+    return (Config.Scenarios.empty and Config.Scenarios.empty.id) or 'empty_intro'
+  end
+  -- Filter by min/maxChars
+  local candidates = {}
+  for _, s in ipairs(pool) do
+    local min = s.minChars or 1
+    local max = s.maxChars or 8
+    if characterCount >= min and characterCount <= max then
+      candidates[#candidates + 1] = s
+    end
+  end
+  if #candidates == 0 then
+    return (Config.Scenarios.empty and Config.Scenarios.empty.id) or 'empty_intro'
+  end
+  -- Weighted random
+  local total = 0
+  for _, s in ipairs(candidates) do total = total + (s.weight or 1) end
+  local roll = math.random() * total
+  local acc = 0
+  for _, s in ipairs(candidates) do
+    acc = acc + (s.weight or 1)
+    if roll <= acc then return s.id end
+  end
+  return candidates[#candidates].id
+end
+
+local function buildAppearancesFor(src, characters)
+  local out = {}
+  for _, c in ipairs(characters) do
+    local a = Characters.GetAppearance(src, c.cid)
+    if a then out[c.cid] = a end
+  end
+  return out
+end
+
 local function openSelector(src)
   if not ServerReady then audit('blocked', src, 'server not ready'); return end
   local s = ensureSession(src)
@@ -154,11 +192,15 @@ local function openSelector(src)
   local characters = Characters.Load(src, s.license) or {}
   s.characters = characters
   local slots = Slots.For(src, s.license)
-  dlog('open src=' .. src .. ' chars=' .. #characters .. ' slots=' .. slots)
+  local scenarioId = pickScenarioId(#characters)
+  local appearances = buildAppearancesFor(src, characters)
+  dlog('open src=' .. src .. ' chars=' .. #characters .. ' slots=' .. slots .. ' scenario=' .. scenarioId)
   TriggerClientEvent('cc_multichar:client:open', src, {
     framework = CC.DetectFramework(),
     characters = characters,
+    appearances = appearances,
     slots = slots,
+    scenarioId = scenarioId,
     ui = Config.UI,
     sceneTimings = Config.SceneTimings,
   })
@@ -225,21 +267,6 @@ RegisterNetEvent('cc_multichar:server:selectCharacter', function(cid)
     options = options,
     previewFlyTo = Config.Spawn.previewFlyTo,
     previewFlyDurationMs = Config.Spawn.previewFlyDurationMs,
-  })
-end)
-
-RegisterNetEvent('cc_multichar:server:requestPreview', function(cid)
-  local src = source
-  if not eventAllowed(src, 'selectCharacter') then return end
-  local s = ensureSession(src)
-  if s.state ~= STATE.SELECTING then return end
-  local char = findCharacterByCid(s, cid)
-  if not char then return end
-  local appearance = Characters.GetAppearance(src, char.cid)
-  TriggerClientEvent('cc_multichar:client:applyPreview', src, {
-    cid = char.cid,
-    gender = char.gender,
-    appearance = appearance,
   })
 end)
 

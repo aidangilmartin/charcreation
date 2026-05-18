@@ -1,72 +1,52 @@
 Scene = Scene or {}
 
 local activeCam
-local activeScene
-local sequenceIndex = 0
+local activeScenario
+local timelineThread = 0
 
-local function pickScene()
-  local scenes = Config.Scenes.scenes
-  if not scenes or #scenes == 0 then return nil end
-  local strategy = Config.Scenes.pickStrategy or 'weighted-random'
-
-  if strategy == 'fixed' then
-    return scenes[Config.Scenes.fixedIndex] or scenes[1]
-  end
-
-  if strategy == 'sequential' then
-    sequenceIndex = (sequenceIndex % #scenes) + 1
-    return scenes[sequenceIndex]
-  end
-
-  -- Weighted random
-  local total = 0
-  for _, s in ipairs(scenes) do total = total + (s.weight or 1) end
-  local roll = math.random() * total
-  local acc = 0
-  for _, s in ipairs(scenes) do
-    acc = acc + (s.weight or 1)
-    if roll <= acc then return s end
-  end
-  return scenes[#scenes]
-end
-
-local function loadAnimDict(dict)
-  if not dict then return end
-  if HasAnimDictLoaded(dict) then return end
-  RequestAnimDict(dict)
-  local deadline = GetGameTimer() + 5000
-  while not HasAnimDictLoaded(dict) and GetGameTimer() < deadline do Wait(0) end
-end
-
-function Scene.Active() return activeScene end
-
-function Scene.Setup()
-  local scene = pickScene()
-  if not scene then return nil end
-
-  DoScreenFadeOut(Config.SceneTimings.fadeOutMs)
-  while not IsScreenFadedOut() do Wait(0) end
-
-  local ped = PlayerPedId()
-  RequestCollisionAtCoord(scene.ped.x, scene.ped.y, scene.ped.z)
-  SetEntityCoords(ped, scene.ped.x, scene.ped.y, scene.ped.z, false, false, false, false)
-  SetEntityHeading(ped, scene.ped.w)
-  FreezeEntityPosition(ped, true)
-  SetEntityInvincible(ped, true)
-  SetPlayerControl(PlayerId(), false, 0)
-  SetEntityVisible(ped, false, false)
-
-  NetworkOverrideClockTime(scene.hour, scene.minute, 0)
-  SetWeatherTypePersist(scene.weather)
-  SetWeatherTypeNow(scene.weather)
-  SetWeatherTypeNowPersist(scene.weather)
-
+local function destroyCam()
   if activeCam then
     DestroyCam(activeCam, true)
     activeCam = nil
   end
+end
 
-  local cam = scene.camera
+function Scene.ActiveCam() return activeCam end
+function Scene.ActiveScenario() return activeScenario end
+
+function Scene.SetAmbient(scenario)
+  NetworkOverrideClockTime(scenario.hour or 12, scenario.minute or 0, 0)
+  SetWeatherTypePersist(scenario.weather or 'CLEAR')
+  SetWeatherTypeNow(scenario.weather or 'CLEAR')
+  SetWeatherTypeNowPersist(scenario.weather or 'CLEAR')
+end
+
+function Scene.HidePlayerPed()
+  local ped = PlayerPedId()
+  FreezeEntityPosition(ped, true)
+  SetEntityInvincible(ped, true)
+  SetPlayerControl(PlayerId(), false, 0)
+  SetEntityVisible(ped, false, false)
+  SetEntityCollision(ped, false, false)
+end
+
+function Scene.ShowPlayerPed(coords)
+  local ped = PlayerPedId()
+  if coords then
+    RequestCollisionAtCoord(coords.x, coords.y, coords.z)
+    SetEntityCoords(ped, coords.x, coords.y, coords.z, false, false, false, false)
+    SetEntityHeading(ped, coords.w or 0.0)
+  end
+  FreezeEntityPosition(ped, false)
+  SetEntityInvincible(ped, false)
+  SetPlayerControl(PlayerId(), true, 0)
+  SetEntityVisible(ped, true, false)
+  SetEntityCollision(ped, true, true)
+end
+
+function Scene.SetupCamera(scenario)
+  destroyCam()
+  local cam = scenario.camera
   activeCam = CreateCamWithParams(
     'DEFAULT_SCRIPTED_CAMERA',
     cam.position.x, cam.position.y, cam.position.z,
@@ -75,54 +55,153 @@ function Scene.Setup()
   PointCamAtCoord(activeCam, cam.lookAt.x, cam.lookAt.y, cam.lookAt.z)
   SetCamActive(activeCam, true)
   RenderScriptCams(true, false, 0, true, true)
+end
 
-  if scene.animation then
-    loadAnimDict(scene.animation.dict)
-  end
+function Scene.Begin(scenario)
+  if activeScenario then Scene.End() end
+  activeScenario = scenario
 
-  HideHudAndRadarThisFrame()
+  DoScreenFadeOut(Config.SceneTimings.fadeOutMs)
+  while not IsScreenFadedOut() do Wait(0) end
+
+  Scene.SetAmbient(scenario)
+  Scene.HidePlayerPed()
+  RequestCollisionAtCoord(scenario.anchor.x, scenario.anchor.y, scenario.anchor.z)
+  local ped = PlayerPedId()
+  SetEntityCoords(ped, scenario.anchor.x, scenario.anchor.y, scenario.anchor.z, false, false, false, false)
+  Scene.SetupCamera(scenario)
+
   CreateThread(function()
-    while activeScene do
+    while activeScenario do
       HideHudAndRadarThisFrame()
       Wait(0)
     end
   end)
 
-  activeScene = scene
   Wait(150)
   DoScreenFadeIn(Config.SceneTimings.fadeInMs)
-  return scene
 end
 
-function Scene.PlayPedAnimation(ped)
-  if not activeScene or not activeScene.animation then return end
-  loadAnimDict(activeScene.animation.dict)
-  TaskPlayAnim(ped, activeScene.animation.dict, activeScene.animation.name,
-    4.0, -4.0, -1, 1, 0.0, false, false, false)
-end
-
-function Scene.FlyTo(target, durationMs)
-  if not activeCam or not target then return end
-  local newCam = CreateCamWithParams(
-    'DEFAULT_SCRIPTED_CAMERA',
-    target.x, target.y, target.z + 12.0,
-    -20.0, 0.0, 0.0, 50.0, false, 0
-  )
-  PointCamAtCoord(newCam, target.x, target.y, target.z)
-  SetCamActiveWithInterp(newCam, activeCam, durationMs or 1200, 1, 1)
-  Wait(durationMs or 1200)
-  DestroyCam(activeCam, true)
-  activeCam = newCam
-end
-
-function Scene.Teardown()
-  if activeCam then
-    DestroyCam(activeCam, true)
-    activeCam = nil
-  end
+function Scene.End()
+  activeScenario = nil
+  timelineThread = timelineThread + 1
+  destroyCam()
   RenderScriptCams(false, false, 0, true, true)
   ClearOverrideWeather()
   ClearWeatherTypePersist()
   NetworkClearClockTimeOverride()
-  activeScene = nil
+end
+
+-- Camera moves -------------------------------------------------------------
+
+local function rotMatrixForward(rot)
+  local rx, rz = math.rad(rot.x), math.rad(rot.z)
+  local cx = math.cos(rx)
+  return vector3(-math.sin(rz) * cx, math.cos(rz) * cx, math.sin(rx))
+end
+
+function Scene.CamForward()
+  if not activeCam then return vector3(0, 1, 0) end
+  return rotMatrixForward(GetCamRot(activeCam, 2))
+end
+
+function Scene.RunTimeline(timeline, ctx)
+  if not timeline or #timeline == 0 then return end
+  timelineThread = timelineThread + 1
+  local thisRun = timelineThread
+
+  CreateThread(function()
+    local start = GetGameTimer()
+    local fired = {}
+    while activeScenario and thisRun == timelineThread do
+      local now = GetGameTimer() - start
+      for i, ev in ipairs(timeline) do
+        if not fired[i] and now >= (ev.at or 0) then
+          fired[i] = true
+          Scene.RunTimelineEvent(ev, ctx)
+        end
+      end
+      Wait(100)
+    end
+  end)
+end
+
+local function getTrackTarget(target, ctx)
+  if target == 'anchor' then
+    return vector3(ctx.scenario.anchor.x, ctx.scenario.anchor.y, ctx.scenario.anchor.z)
+  end
+  if type(target) == 'string' then
+    if target:sub(1, 8) == 'vehicle:' then
+      local veh = ctx.vehicles[target:sub(9)]
+      if veh and DoesEntityExist(veh) then
+        return GetEntityCoords(veh)
+      end
+    elseif target:sub(1, 5) == 'role:' then
+      local p = ctx.roleHeroPed
+      if p and DoesEntityExist(p) then return GetEntityCoords(p) end
+    end
+  end
+  return nil
+end
+
+function Scene.RunTimelineEvent(ev, ctx)
+  if ev.kind == 'cameraOrbit' then
+    local center = getTrackTarget(ev.around or 'anchor', ctx)
+    if not center then return end
+    local duration = ev.durationMs or 8000
+    local radius = ev.radius or 5.0
+    local height = ev.height or 1.5
+    local startTime = GetGameTimer()
+    local thisRun = timelineThread
+    CreateThread(function()
+      while activeCam and activeScenario and thisRun == timelineThread do
+        local elapsed = GetGameTimer() - startTime
+        local t = math.min(elapsed / duration, 1.0)
+        local angle = t * math.pi * 2
+        local x = center.x + math.cos(angle) * radius
+        local y = center.y + math.sin(angle) * radius
+        local z = center.z + height
+        SetCamCoord(activeCam, x, y, z)
+        PointCamAtCoord(activeCam, center.x, center.y, center.z)
+        if t >= 1.0 then break end
+        Wait(0)
+      end
+    end)
+  elseif ev.kind == 'cameraDolly' then
+    local from = GetCamCoord(activeCam)
+    local to = ev.to
+    local duration = ev.durationMs or 6000
+    local startTime = GetGameTimer()
+    local thisRun = timelineThread
+    CreateThread(function()
+      while activeCam and activeScenario and thisRun == timelineThread do
+        local elapsed = GetGameTimer() - startTime
+        local t = math.min(elapsed / duration, 1.0)
+        local s = 1.0 - math.cos(t * math.pi / 2.0) -- ease-out
+        local x = from.x + (to.x - from.x) * s
+        local y = from.y + (to.y - from.y) * s
+        local z = from.z + (to.z - from.z) * s
+        SetCamCoord(activeCam, x, y, z)
+        if t >= 1.0 then break end
+        Wait(0)
+      end
+    end)
+  elseif ev.kind == 'cameraTrack' then
+    local thisRun = timelineThread
+    local startTime = GetGameTimer()
+    local duration = ev.durationMs or 10000
+    CreateThread(function()
+      while activeCam and activeScenario and thisRun == timelineThread do
+        local elapsed = GetGameTimer() - startTime
+        if elapsed >= duration then break end
+        local center = getTrackTarget(ev.target, ctx)
+        if center then
+          local off = ev.offset or vector3(5, 5, 2)
+          SetCamCoord(activeCam, center.x + off.x, center.y + off.y, center.z + off.z)
+          PointCamAtCoord(activeCam, center.x, center.y, center.z)
+        end
+        Wait(0)
+      end
+    end)
+  end
 end

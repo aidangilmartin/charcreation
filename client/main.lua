@@ -1,5 +1,6 @@
 local inUI = false
 local sessionCharacters = {}
+local sessionAppearances = {}
 
 local function clog(...)
   if not Config.Debug then return end
@@ -19,54 +20,48 @@ local function sendUI(action, data)
   SendNUIMessage({ action = action, data = data })
 end
 
-local function openSelectorWithScene(payload)
-  shutdownLoadscreen()
-  sessionCharacters = payload.characters or {}
-  Scene.Setup()
-  -- Pick a sensible default preview ped
-  local first = sessionCharacters[1]
-  if first then
-    Preview.Spawn(first.gender, nil)
-    TriggerServerEvent('cc_multichar:server:requestPreview', first.cid)
-  else
-    Preview.Spawn('m', nil)
+local function resolveScenarioById(id)
+  for _, s in ipairs(Config.Scenarios.scenarios or {}) do
+    if s.id == id then return s end
   end
-  SetNuiFocus(true, true)
-  inUI = true
-  sendUI('open', payload)
+  return Config.Scenarios.empty
 end
 
 RegisterNetEvent('cc_multichar:client:requestOpen', function()
   TriggerServerEvent('cc_multichar:server:requestOpen')
 end)
 
-RegisterNetEvent('cc_multichar:client:open', openSelectorWithScene)
+RegisterNetEvent('cc_multichar:client:open', function(payload)
+  shutdownLoadscreen()
+  sessionCharacters = payload.characters or {}
+  sessionAppearances = payload.appearances or {}
 
-RegisterNetEvent('cc_multichar:client:applyPreview', function(data)
-  if not inUI or not data then return end
-  Preview.Spawn(data.gender or 'm', data.appearance)
+  local scenario = resolveScenarioById(payload.scenarioId)
+  Scenarios.Start(scenario, sessionCharacters, sessionAppearances)
+  Hover.Start()
+
+  SetNuiFocus(true, true)
+  inUI = true
+  sendUI('open', payload)
 end)
 
 RegisterNetEvent('cc_multichar:client:deleteResult', function(result)
   if result and result.ok then
     sessionCharacters = result.characters or sessionCharacters
+    -- Restart the scenario so the deleted character's ped disappears
+    local scenario = Scenarios.Current() and Scenarios.Current().scenario or Config.Scenarios.empty
+    Scenarios.Start(scenario, sessionCharacters, sessionAppearances)
+    Hover.SetSelectedCid(nil)
   end
   sendUI('deleteResult', result)
 end)
 
 RegisterNetEvent('cc_multichar:client:createResult', function(result)
-  if result and result.ok and result.character then
-    sessionCharacters[#sessionCharacters + 1] = result.character
-    Preview.Spawn(result.character.gender or 'm', nil)
-  end
   sendUI('createResult', result)
 end)
 
 RegisterNetEvent('cc_multichar:client:openSpawnPicker', function(data)
   if not data then return end
-  if data.character then
-    Preview.Spawn(data.character.gender or 'm', data.appearance)
-  end
   sendUI('spawnPicker', data)
 end)
 
@@ -82,16 +77,17 @@ RegisterNetEvent('cc_multichar:client:beginCreator', function(data)
   if not data or not data.resource or not data.export then return end
   SetNuiFocus(false, false)
   inUI = false
-  Preview.Clear()
-  -- Move the live player ped to the scene position so the appearance editor
-  -- has a body to work on.
-  local scene = Scene.Active()
-  if scene then
-    local ped = PlayerPedId()
-    SetEntityCoords(ped, scene.ped.x, scene.ped.y, scene.ped.z, false, false, false, false)
-    SetEntityHeading(ped, scene.ped.w)
-    SetEntityVisible(ped, true, false)
-  end
+  Hover.Stop()
+  Scenarios.Stop()
+
+  -- Move the live player ped to the anchor of the (now-ended) scenario so the
+  -- appearance editor has a body to customize. We're not in a scene anymore so
+  -- just put them at a safe creator spot.
+  local ped = PlayerPedId()
+  local anchor = Config.Scenarios.empty.anchor
+  SetEntityCoords(ped, anchor.x, anchor.y, anchor.z, false, false, false, false)
+  SetEntityHeading(ped, anchor.w or 0.0)
+  SetEntityVisible(ped, true, false)
 
   local invocation = Config.CharacterCreator.invocation or 'callback'
 
@@ -104,7 +100,6 @@ RegisterNetEvent('cc_multichar:client:beginCreator', function(data)
     end
 
     if invocation == 'manual' then
-      -- Caller will trigger FinishAppearance themselves.
       pcall(exportRef)
       return
     end
@@ -114,29 +109,49 @@ RegisterNetEvent('cc_multichar:client:beginCreator', function(data)
       local ok, err = pcall(function()
         exportRef(function() done = true end)
       end)
-      if not ok then
-        clog('appearance callback export failed:', err)
-        done = true
-      end
+      if not ok then clog('appearance callback failed:', err); done = true end
       while not done do Wait(100) end
     else
       local ok, err = pcall(exportRef)
-      if not ok then clog('appearance blocking export failed:', err) end
+      if not ok then clog('appearance blocking failed:', err) end
     end
 
     TriggerServerEvent('cc_multichar:server:appearanceComplete')
   end)
 end)
 
+-- NUI callbacks -----------------------------------------------------------
+
 RegisterNUICallback('ready', function(_, cb) cb({ ok = true }) end)
 
-RegisterNUICallback('selectCharacter', function(data, cb)
-  TriggerServerEvent('cc_multichar:server:selectCharacter', data.cid)
+RegisterNUICallback('cursor', function(data, cb)
+  if data then Hover.SetCursor(data.x, data.y) end
   cb({ ok = true })
 end)
 
-RegisterNUICallback('previewCharacter', function(data, cb)
-  TriggerServerEvent('cc_multichar:server:requestPreview', data.cid)
+RegisterNUICallback('selectClick', function(_, cb)
+  local cid = Hover.HoveredCid()
+  if cid then
+    Hover.SetSelectedCid(cid)
+    local character
+    for _, c in ipairs(sessionCharacters) do
+      if c.cid == cid then character = c; break end
+    end
+    sendUI('selected', { cid = cid, character = character })
+  end
+  cb({ ok = true })
+end)
+
+RegisterNUICallback('clearSelection', function(_, cb)
+  Hover.SetSelectedCid(nil)
+  sendUI('selected', { cid = nil })
+  cb({ ok = true })
+end)
+
+RegisterNUICallback('playCharacter', function(data, cb)
+  if data and data.cid then
+    TriggerServerEvent('cc_multichar:server:selectCharacter', data.cid)
+  end
   cb({ ok = true })
 end)
 
@@ -160,13 +175,6 @@ RegisterNUICallback('selectSpawn', function(data, cb)
   cb({ ok = true })
 end)
 
-RegisterNUICallback('previewSpawn', function(data, cb)
-  if data and data.coords and Config.Spawn.previewFlyTo then
-    Scene.FlyTo(data.coords, Config.Spawn.previewFlyDurationMs)
-  end
-  cb({ ok = true })
-end)
-
 CreateThread(function()
   if not Config.AutoOpenOnJoin then return end
   Wait(Config.AutoOpenDelayMs or 1500)
@@ -175,7 +183,7 @@ end)
 
 AddEventHandler('onResourceStop', function(res)
   if res ~= GetCurrentResourceName() then return end
-  Preview.Clear()
-  Scene.Teardown()
+  Hover.Stop()
+  Scenarios.Stop()
   SetNuiFocus(false, false)
 end)
