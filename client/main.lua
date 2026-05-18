@@ -1,5 +1,16 @@
 local inUI = false
 
+
+local function shutdownLoadscreen()
+  if GetIsLoadingScreenActive and GetIsLoadingScreenActive() then
+    ShutdownLoadingScreenNui()
+    ShutdownLoadingScreen()
+  else
+    ShutdownLoadingScreenNui()
+    ShutdownLoadingScreen()
+  end
+end
+
 local function loadAnim(dict)
   if not HasAnimDictLoaded(dict) then
     RequestAnimDict(dict)
@@ -43,6 +54,7 @@ RegisterNetEvent('cc_multichar:client:requestOpen', function()
 end)
 
 RegisterNetEvent('cc_multichar:client:open', function(payload)
+  shutdownLoadscreen()
   playScenePreset()
   SetNuiFocus(true, true)
   inUI = true
