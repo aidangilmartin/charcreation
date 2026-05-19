@@ -1,46 +1,10 @@
 local Sessions, Rate = {}, {}
 local ServerReady = false
 
-local STATE = {
-  IDLE         = 'idle',
-  SELECTING    = 'selecting',
-  CREATING     = 'creating',
-  SPAWN_SELECT = 'spawn_select',
-  FINISHED     = 'finished',
-}
-
-local function dlog(...)
-  -- Legacy debug helper kept for backwards-compat. Routes through Log.debug.
-  local args = { ... }
-  for i = 1, #args do args[i] = tostring(args[i]) end
-  Log.debug('session', table.concat(args, ' '))
-end
+local STATE = { IDLE = 'idle', SELECTING = 'selecting', FINISHED = 'finished' }
 
 local function audit(event, src, message)
-  Log.warn('audit', '[%s] src=%s msg=%s', event, tostring(src), tostring(message))
-  local cfg = Config.Security and Config.Security.audit
-  if cfg and cfg.webhook and cfg.webhook ~= '' then
-    PerformHttpRequest(cfg.webhook, function() end, 'POST',
-      json.encode({ content = ('[%s] src=%s msg=%s'):format(event, tostring(src), tostring(message)) }),
-      { ['Content-Type'] = 'application/json' })
-  end
-end
-
-local function ensureSession(src)
-  local s = Sessions[src]
-  if s then return s end
-  local license = CC.Adapter().getIdentifier(src)
-  s = {
-    src = src,
-    license = license,
-    state = STATE.IDLE,
-    characters = {},
-    allowedSpawns = {},
-    selectedCid = nil,
-    pendingCharacter = nil,
-  }
-  Sessions[src] = s
-  return s
+  Log.warn('security', '[%s] src=%s msg=%s', event, tostring(src), tostring(message))
 end
 
 local function nowMs() return GetGameTimer() end
@@ -58,121 +22,16 @@ local function eventAllowed(src, name)
     return true
   end
   slot.c = slot.c + 1
-  if slot.c > maxCalls then
-    audit('rate_limit', src, name)
-    return false
-  end
+  if slot.c > maxCalls then audit('rate_limit', src, name); return false end
   return true
 end
 
-local function startCheck()
-  Log.info('resource', 'starting cc_multichar v1.0.0')
-  if Config.Database.adapter == 'oxmysql' and not DB.Available() then
-    Log.warn('db', 'oxmysql is not started — character data will not load until it is.')
-  end
-  DB.EnsureSchema()
-  Log.info('framework', 'detected framework: %s', CC.DetectFramework())
-  Log.info('resource', 'scenarios in pool: %d (group/empty + solo)', #(Config.Scenarios.scenarios or {}))
-  Log.info('resource', 'slot default: %d, ace tiers: %d', Config.Slots.default, #(Config.Slots.aceTiers or {}))
-  if Log.ValidateConfig then Log.ValidateConfig() end
-  ServerReady = true
-  Log.info('resource', 'ready')
-end
-
-local function buildSpawnOptions(session, character)
-  local options = {}
-  for _, p in ipairs(Config.Spawn.staticPoints or {}) do
-    options[#options + 1] = {
-      id = 'static:' .. tostring(p.id),
-      label = p.label,
-      description = p.description,
-      kind = 'static',
-      coords = p.coords,
-    }
-  end
-
-  local jobPoints = (Config.Spawn.jobPoints or {})[character and character.job and character.job:lower() or '']
-  if jobPoints then
-    for _, p in ipairs(jobPoints) do
-      options[#options + 1] = {
-        id = 'job:' .. tostring(p.id),
-        label = p.label,
-        description = p.description,
-        kind = 'job',
-        coords = p.coords,
-      }
-    end
-  end
-
-  if type(Config.Spawn.customApartmentResolver) == 'function' then
-    local ok, resolved = pcall(Config.Spawn.customApartmentResolver, session.src, character)
-    if ok and type(resolved) == 'table' then
-      for _, p in ipairs(resolved) do
-        options[#options + 1] = {
-          id = 'apt:' .. tostring(p.id),
-          label = p.label,
-          description = p.description,
-          kind = 'apartment',
-          coords = p.coords,
-        }
-      end
-    end
-  else
-    for _, p in ipairs(Config.Spawn.apartmentPoints or {}) do
-      options[#options + 1] = {
-        id = 'apt:' .. tostring(p.id),
-        label = p.label,
-        description = p.description,
-        kind = 'apartment',
-        coords = p.coords,
-      }
-    end
-  end
-
-  if Config.Spawn.includeLastLocation then
-    local last = Characters.GetLastLocation(session.src, character.cid)
-    if last then
-      table.insert(options, 1, {
-        id = 'last',
-        label = 'Last Location',
-        description = 'Where you logged off',
-        kind = 'last',
-        coords = last,
-      })
-    end
-  end
-
-  session.allowedSpawns = options
-  return options
-end
-
-local function pickScenarioId(characterCount)
-  local pool = Config.Scenarios.scenarios or {}
-  if characterCount == 0 then
-    return (Config.Scenarios.empty and Config.Scenarios.empty.id) or 'empty_intro'
-  end
-  -- Filter by min/maxChars
-  local candidates = {}
-  for _, s in ipairs(pool) do
-    local min = s.minChars or 1
-    local max = s.maxChars or 8
-    if characterCount >= min and characterCount <= max then
-      candidates[#candidates + 1] = s
-    end
-  end
-  if #candidates == 0 then
-    return (Config.Scenarios.empty and Config.Scenarios.empty.id) or 'empty_intro'
-  end
-  -- Weighted random
-  local total = 0
-  for _, s in ipairs(candidates) do total = total + (s.weight or 1) end
-  local roll = math.random() * total
-  local acc = 0
-  for _, s in ipairs(candidates) do
-    acc = acc + (s.weight or 1)
-    if roll <= acc then return s.id end
-  end
-  return candidates[#candidates].id
+local function ensureSession(src)
+  if Sessions[src] then return Sessions[src] end
+  local adapter = CC.Adapter()
+  local license = adapter and adapter.getIdentifier(src)
+  Sessions[src] = { src = src, license = license, state = STATE.IDLE, characters = {} }
+  return Sessions[src]
 end
 
 local function buildAppearancesFor(src, characters)
@@ -184,55 +43,60 @@ local function buildAppearancesFor(src, characters)
   return out
 end
 
+local function findCharacter(session, cid)
+  for i = 1, #(session.characters or {}) do
+    if tostring(session.characters[i].cid) == tostring(cid) then return session.characters[i] end
+  end
+end
+
 local function openSelector(src)
   if not ServerReady then audit('blocked', src, 'server not ready'); return end
   local s = ensureSession(src)
   if Config.Security.requireAuthenticatedSession and not s.license then
-    audit('blocked', src, 'no license identifier')
-    return
+    audit('blocked', src, 'no license identifier'); return
   end
-  s.state = STATE.SELECTING
-  local characters = Characters.Load(src, s.license) or {}
-  s.characters = characters
-  local slots = Slots.For(src, s.license)
-  local t = Log.timer('scenario', 'pickScenarioId+appearances')
-  local scenarioId = pickScenarioId(#characters)
-  local appearances = buildAppearancesFor(src, characters)
-  t()
 
-  -- Move the player into their private routing bucket before sending the
-  -- open payload, so by the time the client spawns scene entities they're
-  -- already isolated from the main world.
+  s.state = STATE.SELECTING
+  s.characters = Characters.Load(src, s.license) or {}
+  local slots = Slots.For(src, s.license)
+  local appearances = buildAppearancesFor(src, s.characters)
   local bucket = Instance.Enter(src)
 
-  Log.info('selector', 'open src=%s chars=%d slots=%d scenario=%s bucket=%s', src, #characters, slots, scenarioId, tostring(bucket))
+  Log.info('selector', 'open src=%s chars=%d slots=%d bucket=%s',
+           src, #s.characters, slots, tostring(bucket))
+
   TriggerClientEvent('cc_multichar:client:open', src, {
-    framework = CC.DetectFramework(),
-    characters = characters,
+    characters  = s.characters,
     appearances = appearances,
-    slots = slots,
-    scenarioId = scenarioId,
-    bucket = bucket,
-    ui = Config.UI,
-    sceneTimings = Config.SceneTimings,
+    slots       = slots,
   })
 end
 
+-- Lifecycle ----------------------------------------------------------------
+
+local function startCheck()
+  Log.info('resource', 'starting cc_multichar v2.0.0')
+  if Config.Database.adapter == 'oxmysql' and not DB.Available() then
+    Log.warn('db', 'oxmysql is not started — character data will not load until it is')
+  end
+  DB.EnsureSchema()
+  Log.info('framework', 'detected: %s', CC.DetectFramework())
+  ServerReady = true
+end
+
 AddEventHandler('onResourceStart', function(res)
-  if res ~= GetCurrentResourceName() then return end
-  startCheck()
+  if res == GetCurrentResourceName() then startCheck() end
 end)
 
 AddEventHandler('onResourceStop', function(res)
-  if res == GetCurrentResourceName() then
-    Sessions, Rate = {}, {}
-  end
+  if res == GetCurrentResourceName() then Sessions, Rate = {}, {} end
 end)
 
 AddEventHandler('playerDropped', function()
-  local src = source
-  Sessions[src], Rate[src] = nil, nil
+  Sessions[source], Rate[source] = nil, nil
 end)
+
+-- Events from the client ---------------------------------------------------
 
 RegisterNetEvent('cc_multichar:server:requestOpen', function()
   local src = source
@@ -240,289 +104,94 @@ RegisterNetEvent('cc_multichar:server:requestOpen', function()
   openSelector(src)
 end)
 
--- Look up a character on the server (don't trust client-supplied data).
-local function findCharacterByCid(session, cid)
-  for i = 1, #(session.characters or {}) do
-    if tostring(session.characters[i].cid) == tostring(cid) then
-      return session.characters[i]
-    end
-  end
-  if session.pendingCharacter and tostring(session.pendingCharacter.cid) == tostring(cid) then
-    return session.pendingCharacter
-  end
-end
-
 RegisterNetEvent('cc_multichar:server:selectCharacter', function(cid)
   local src = source
   if not eventAllowed(src, 'selectCharacter') then return end
   local s = ensureSession(src)
   if s.state ~= STATE.SELECTING then return end
 
-  local char = findCharacterByCid(s, cid)
-  if not char then
-    audit('invalid_cid', src, cid)
-    return
-  end
-
-  s.selectedCid = tostring(cid)
-  s.state = STATE.SPAWN_SELECT
-  local options = buildSpawnOptions(s, char)
-  if #options == 0 then
-    audit('no_spawns', src, 'no options')
-    return
-  end
-
-  local appearance = Characters.GetAppearance(src, char.cid)
-  TriggerClientEvent('cc_multichar:client:openSpawnPicker', src, {
-    character = char,
-    appearance = appearance,
-    options = options,
-    previewFlyTo = Config.Spawn.previewFlyTo,
-    previewFlyDurationMs = Config.Spawn.previewFlyDurationMs,
-  })
-end)
-
-RegisterNetEvent('cc_multichar:server:requestStats', function(cid)
-  local src = source
-  if not eventAllowed(src, 'requestStats') then return end
-  local s = ensureSession(src)
-  if s.state ~= STATE.SELECTING then return end
-  local char = findCharacterByCid(s, cid)
-  if not char then return end
-  local stats = Characters.GetExtendedStats(src, char.cid) or {}
-  TriggerClientEvent('cc_multichar:client:stats', src, { cid = char.cid, stats = stats })
-end)
-
-RegisterNetEvent('cc_multichar:server:selectSpawn', function(spawnId)
-  local src = source
-  if not eventAllowed(src, 'selectSpawn') then return end
-  local s = ensureSession(src)
-  if s.state ~= STATE.SPAWN_SELECT then return end
-
-  local selected
-  for i = 1, #s.allowedSpawns do
-    if s.allowedSpawns[i].id == spawnId then selected = s.allowedSpawns[i]; break end
-  end
-  if not selected then
-    audit('invalid_spawn', src, spawnId)
-    return
-  end
-
-  local char = findCharacterByCid(s, s.selectedCid)
-  if not char then return end
-
-  -- Hand the character to the framework
-  local adapter = CC.Adapter()
-  if char._seed then
-    adapter.login(src, nil, char._seed)
-  else
-    adapter.login(src, char.cid)
-  end
-
-  -- Restore the player's routing bucket BEFORE telling the client to teleport,
-  -- so they materialize in the main world (not the private selector instance).
-  Instance.Leave(src)
-
-  s.state = STATE.FINISHED
-  TriggerClientEvent('cc_multichar:client:spawnApproved', src, {
-    coords = selected.coords,
-    character = char,
-  })
-
-  -- Fire login hooks
-  if Config.LoginHooks then
-    if Config.LoginHooks.generic and Config.LoginHooks.generic.server then
-      TriggerEvent(Config.LoginHooks.generic.server, src, char, selected.coords)
-    end
-    if Config.LoginHooks.fireNativeFrameworkEvent then
-      local fw = CC.DetectFramework()
-      if fw == 'qbox' then
-        TriggerEvent('qbx_core:server:onPlayerLoaded', src)
-      elseif fw == 'qbcore' then
-        TriggerEvent('QBCore:Server:OnPlayerLoaded', src)
-      elseif fw == 'esx' then
-        TriggerEvent('esx:playerLoaded', src, char)
-      end
-    end
-  end
-end)
-
-RegisterNetEvent('cc_multichar:server:deleteCharacter', function(cid, typedName)
-  local src = source
-  if not eventAllowed(src, 'deleteCharacter') then return end
-  if not Config.Security.allowDelete then return end
-
-  local s = ensureSession(src)
-  if s.state ~= STATE.SELECTING then return end
-
-  local char = findCharacterByCid(s, cid)
+  local char = findCharacter(s, cid)
   if not char then audit('invalid_cid', src, cid); return end
 
-  if tostring(typedName or ''):lower() ~= tostring(char.name or ''):lower() then
-    audit('delete_name_mismatch', src, ('cid=%s typed=%s'):format(tostring(cid), tostring(typedName)))
-    TriggerClientEvent('cc_multichar:client:deleteResult', src, { ok = false, reason = 'name_mismatch' })
-    return
+  -- 1. Log the character in via the framework adapter
+  local adapter = CC.Adapter()
+  local handled = false
+  if type(Config.DataProviders.customLoginCharacter) == 'function' then
+    local ok, ret = pcall(Config.DataProviders.customLoginCharacter, src, char)
+    if ok and ret then handled = true end
   end
+  if not handled then adapter.login(src, char.cid) end
 
-  local ok = Characters.Delete(src, s.license, char.cid)
-  if not ok then
-    audit('delete_failed', src, cid)
-    TriggerClientEvent('cc_multichar:client:deleteResult', src, { ok = false, reason = 'db_error' })
-    return
+  -- 2. Release routing bucket before the spawn happens
+  Instance.Leave(src)
+  s.state = STATE.FINISHED
+
+  -- 3. Tell the client to tear down the scene and exit NUI focus
+  TriggerClientEvent('cc_multichar:client:close', src, { character = char })
+
+  -- 4. Hand off to the user's spawn flow.
+  --    mode='framework' is a no-op: adapter.login() already fired the
+  --    framework's native login event, which the framework's own spawn
+  --    resource is listening for. Doing anything more would double-fire.
+  local h = Config.Handlers.onCharacterSelected
+  if h.mode == 'event' then
+    TriggerEvent(h.event, src, char)
+    if h.clientEvent and h.clientEvent ~= '' then
+      TriggerClientEvent(h.clientEvent, src, char)
+    end
+  elseif h.mode == 'export' and h.export.resource ~= '' and h.export.name ~= '' then
+    local ok, err = pcall(function() exports[h.export.resource][h.export.name](src, char) end)
+    if not ok then Log.error('selector', 'export call failed: %s', err) end
   end
-
-  -- Refresh
-  s.characters = Characters.Load(src, s.license) or {}
-  audit('delete_ok', src, cid)
-  TriggerClientEvent('cc_multichar:client:deleteResult', src, {
-    ok = true,
-    cid = char.cid,
-    characters = s.characters,
-  })
 end)
 
-RegisterNetEvent('cc_multichar:server:createCharacter', function(info)
+RegisterNetEvent('cc_multichar:server:createCharacter', function(slotIndex)
   local src = source
   if not eventAllowed(src, 'createCharacter') then return end
   local s = ensureSession(src)
   if s.state ~= STATE.SELECTING then return end
 
-  if type(info) ~= 'table' then return end
-  local v = Config.UI.validation
-  local function isStr(x) return type(x) == 'string' end
-  local function trim(x) return (x:gsub('^%s+', ''):gsub('%s+$', '')) end
-
-  if not isStr(info.firstname) or not isStr(info.lastname) then return end
-  info.firstname = trim(info.firstname)
-  info.lastname = trim(info.lastname)
-  if #info.firstname < v.minNameLength or #info.firstname > v.maxNameLength then return end
-  if #info.lastname  < v.minNameLength or #info.lastname  > v.maxNameLength then return end
-  if not isStr(info.dob) or not info.dob:match('^%d%d%d%d%-%d%d%-%d%d$') then return end
-  if info.gender ~= 'm' and info.gender ~= 'f' then return end
-
-  -- Slot check
+  -- Slot bounds check
   local slots = Slots.For(src, s.license)
-  if #(s.characters or {}) >= slots then
-    TriggerClientEvent('cc_multichar:client:createResult', src, { ok = false, reason = 'slots_full' })
+  if (#(s.characters or {})) >= slots then
+    audit('slots_full', src, slotIndex)
     return
   end
 
-  local created = Characters.Create(src, s.license, info)
-  if not created then
-    TriggerClientEvent('cc_multichar:client:createResult', src, { ok = false, reason = 'create_failed' })
-    return
-  end
+  Log.info('selector', 'create requested src=%s slot=%s', src, tostring(slotIndex))
 
-  s.pendingCharacter = created
-  s.state = STATE.CREATING
-  s.selectedCid = created.cid
-
-  audit('create_ok', src, created.cid)
-  TriggerClientEvent('cc_multichar:client:createResult', src, { ok = true, character = created })
-end)
-
-RegisterNetEvent('cc_multichar:server:beginCreatorAppearance', function()
-  local src = source
-  if not eventAllowed(src, 'beginCreator') then return end
-  local s = ensureSession(src)
-  if s.state ~= STATE.CREATING or not s.pendingCharacter then return end
-  TriggerClientEvent('cc_multichar:client:beginCreator', src, {
-    resource = Config.CharacterCreator.resource,
-    export = Config.CharacterCreator.export,
-    character = s.pendingCharacter,
-  })
-end)
-
-RegisterNetEvent('cc_multichar:server:appearanceComplete', function()
-  local src = source
-  local s = ensureSession(src)
-  if s.state ~= STATE.CREATING or not s.pendingCharacter then return end
-  -- After appearance, go to spawn select
-  s.state = STATE.SPAWN_SELECT
-  s.characters[#s.characters + 1] = s.pendingCharacter
-  local options = buildSpawnOptions(s, s.pendingCharacter)
-  TriggerClientEvent('cc_multichar:client:openSpawnPicker', src, {
-    character = s.pendingCharacter,
-    options = options,
-    previewFlyTo = Config.Spawn.previewFlyTo,
-    previewFlyDurationMs = Config.Spawn.previewFlyDurationMs,
-  })
-end)
-
-exports('OpenForPlayer', function(src)
-  TriggerClientEvent('cc_multichar:client:requestOpen', src)
-end)
-
--- /switch flow ------------------------------------------------------------
--- Client triggers requestSwitch -> server asks the client to confirm safe-zone,
--- waits for switchSafeZoneAck, then logs out the current character + reopens.
-
-local switchCooldowns = {}
-
-RegisterNetEvent('cc_multichar:server:requestSwitch', function()
-  local src = source
-  if not Config.Switch or not Config.Switch.enabled then return end
-
-  local now = os.time()
-  local cd = switchCooldowns[src]
-  local cooldownSec = Config.Switch.cooldownSeconds or 60
-  if cd and (now - cd) < cooldownSec then
-    TriggerClientEvent('cc_multichar:client:switchRejected', src, {
-      code = 'cooldown',
-      retryInSec = cooldownSec - (now - cd),
-    })
-    return
-  end
-
-  if Config.Switch.safeZone and Config.Switch.safeZone.customCheck then
-    local ok, reason = pcall(Config.Switch.safeZone.customCheck, src)
-    if ok and reason ~= nil and reason ~= true then
-      TriggerClientEvent('cc_multichar:client:switchRejected', src, { code = 'unsafe', reason = reason })
-      return
-    end
-  end
-
-  TriggerClientEvent('cc_multichar:client:switchSafeZoneCheck', src, Config.Switch.safeZone or {})
-end)
-
-RegisterNetEvent('cc_multichar:server:switchSafeZoneAck', function(result)
-  local src = source
-  if type(result) ~= 'table' then return end
-  if not result.ok then
-    TriggerClientEvent('cc_multichar:client:switchRejected', src, { code = 'unsafe', reason = result.reason })
-    return
-  end
-
-  -- Save and logout the current character
-  local adapter = CC.Adapter()
-  if adapter and adapter.logout then pcall(adapter.logout, src) end
-
-  switchCooldowns[src] = os.time()
-  -- Reset session state and reopen the selector
-  local s = ensureSession(src)
+  -- Release the player from the bucket and tell the client to tear down
+  -- the scene so the framework's creator UI runs in the main world.
+  Instance.Leave(src)
   s.state = STATE.IDLE
-  s.characters = {}
-  s.selectedCid = nil
-  s.pendingCharacter = nil
-  TriggerClientEvent('cc_multichar:client:switchPrepare', src)
-  openSelector(src)
-end)
+  TriggerClientEvent('cc_multichar:client:close', src, {})
 
--- For "manual" invocation appearance editors: call this from your editor
--- when the player is done customizing.
-exports('FinishAppearance', function(src)
-  local s = ensureSession(src)
-  if s.state == STATE.CREATING and s.pendingCharacter then
-    TriggerEvent('cc_multichar:server:appearanceComplete', src)
-    -- Run inline so we get the right `source`.
-    s.state = STATE.SPAWN_SELECT
-    s.characters[#s.characters + 1] = s.pendingCharacter
-    local options = buildSpawnOptions(s, s.pendingCharacter)
-    TriggerClientEvent('cc_multichar:client:openSpawnPicker', src, {
-      character = s.pendingCharacter,
-      options = options,
-      previewFlyTo = Config.Spawn.previewFlyTo,
-      previewFlyDurationMs = Config.Spawn.previewFlyDurationMs,
-    })
+  local h = Config.Handlers.onCreateCharacter
+  if h.mode == 'framework' then
+    local fw = CC.DetectFramework()
+    local evt = h.framework[fw]
+    if evt and evt ~= '' then
+      Log.info('selector', 'firing framework creator event %s', evt)
+      TriggerClientEvent(evt, src, slotIndex)
+    end
+  elseif h.mode == 'event' then
+    TriggerEvent(h.event, src, slotIndex)
+    if h.clientEvent and h.clientEvent ~= '' then
+      TriggerClientEvent(h.clientEvent, src, slotIndex)
+    end
+  elseif h.mode == 'export' and h.export.resource ~= '' and h.export.name ~= '' then
+    local ok, err = pcall(function() exports[h.export.resource][h.export.name](src, slotIndex) end)
+    if not ok then Log.error('selector', 'export call failed: %s', err) end
   end
 end)
+
+-- Public exports -----------------------------------------------------------
+
+-- Open the selector for a specific player. Useful for queue/whitelist flows
+-- that disable AutoOpenOnJoin and trigger us manually.
+exports('OpenForPlayer', function(src) openSelector(src) end)
+
+-- After your creator resource finishes saving a new character, call this to
+-- bring the player back to the selector with the new character visible.
+exports('Reopen', function(src) openSelector(src) end)
+

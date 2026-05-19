@@ -1,101 +1,130 @@
+-- Hover detection + 3D drawing for the in-scene selector.
+-- We don't raycast; instead we project each ped's head to screen and check
+-- the distance to the cursor. Much simpler and more reliable than raycasting
+-- through reduced-alpha peds.
+
 Hover = Hover or {}
 
 local active = false
-local hoveredCid = nil
 local hoveredPed = nil
-local selectedCid = nil
-local lastNuiX, lastNuiY = 0.5, 0.5
+local sessionCharacters = {}
 
-local function screenToWorldRay(cam, ndcX, ndcY)
-  -- ndcX, ndcY in [-1, 1]. Build a ray from cam through that point.
-  local camPos = GetCamCoord(cam)
-  local camRot = GetCamRot(cam, 2)
-  local fov = math.rad(GetCamFov(cam))
-
-  local cosX = math.cos(math.rad(camRot.x))
-  local sinX = math.sin(math.rad(camRot.x))
-  local cosZ = math.cos(math.rad(camRot.z))
-  local sinZ = math.sin(math.rad(camRot.z))
-
-  local forward = vector3(-sinZ * cosX, cosZ * cosX, sinX)
-  local right   = vector3(cosZ, sinZ, 0.0)
-  local up      = vector3(-sinZ * sinX, cosZ * sinX, -cosX)  -- pitch-up direction
-  -- (note: GTA's coordinate handedness; for screen-up we negate the Z term)
-  up = vector3(sinZ * sinX, -cosZ * sinX, cosX)
-
-  local _, screenW, screenH = 0, GetActiveScreenResolution()
-  local aspect = screenW / screenH
-  local tanHalf = math.tan(fov / 2.0)
-
-  local dir = forward + right * (ndcX * tanHalf * aspect) + up * (ndcY * tanHalf)
-  dir = dir / #(dir)
-  return camPos, dir
+local function drawText3D(world, text, scale, color)
+  local onScreen, x, y = GetScreenCoordFromWorldCoord(world.x, world.y, world.z)
+  if not onScreen then return end
+  SetTextScale(0.0, scale or 0.4)
+  SetTextFont(4)
+  SetTextProportional(true)
+  SetTextColour(color[1], color[2], color[3], color[4])
+  SetTextDropshadow(0, 0, 0, 0, 255)
+  SetTextEdge(2, 0, 0, 0, 150)
+  SetTextDropShadow()
+  SetTextOutline()
+  SetTextEntry('STRING')
+  SetTextCentre(true)
+  AddTextComponentString(text)
+  DrawText(x, y)
 end
 
-local function raycastForPed(cam)
-  if not cam then return nil end
-  -- Map [0,1] cursor coords to NDC [-1,1] with vertical flip
-  local ndcX = (lastNuiX - 0.5) * 2.0
-  local ndcY = (0.5 - lastNuiY) * 2.0
+local function drawMarker(pos, color)
+  -- Type 2 = downward chevron
+  DrawMarker(
+    2,
+    pos.x, pos.y, pos.z,
+    0, 0, 0,                -- direction
+    0, 0, 0,                -- rotation
+    0.3, 0.3, 0.3,          -- scale
+    color[1], color[2], color[3], color[4],
+    true, true, 2,          -- bobUpAndDown, faceCamera, p19
+    false, nil, nil, false
+  )
+end
 
-  local origin, dir = screenToWorldRay(cam, ndcX, ndcY)
-  local target = origin + dir * 50.0
+local function distanceSqOnScreen(world, cursorX, cursorY)
+  local onScreen, x, y = GetScreenCoordFromWorldCoord(world.x, world.y, world.z)
+  if not onScreen then return math.huge end
+  local w, h = GetActiveScreenResolution()
+  local sx = x * w
+  local sy = y * h
+  local dx = sx - cursorX
+  local dy = sy - cursorY
+  return dx * dx + dy * dy
+end
 
-  local ray = StartShapeTestRay(origin.x, origin.y, origin.z, target.x, target.y, target.z, 12, PlayerPedId(), 0)
-  local _, hit, _, _, entity = GetShapeTestResult(ray)
-  if hit == 1 and entity ~= 0 and IsEntityAPed(entity) then
-    return entity
+local function pickHoveredPed()
+  if not Scene.IsActive() then return nil end
+  local cx, cy = GetNuiCursorPosition()
+  local best, bestDist = nil, (Config.Hover.hitRadiusPx ^ 2)
+  for _, ped in ipairs(PedSetup.AllPeds()) do
+    if DoesEntityExist(ped) then
+      -- Head bone for screen projection
+      local head = GetPedBoneCoords(ped, 31086, 0.0, 0.0, 0.0)
+      local d = distanceSqOnScreen(head, cx, cy)
+      if d < bestDist then best, bestDist = ped, d end
+    end
   end
-  return nil
+  return best
 end
+
+function Hover.HoveredPed() return hoveredPed end
 
 function Hover.Start()
   if active then return end
   active = true
+  hoveredPed = nil
+
+  -- Tick the hover pick on a loose interval
   CreateThread(function()
     while active do
-      local cam = Scene.ActiveCam()
-      if cam then
-        local hit = raycastForPed(cam)
-        local cid = hit and Scenarios.PedToCid(hit)
-        if cid ~= hoveredCid then
-          hoveredCid = cid
-          hoveredPed = hit
-          SendNUIMessage({ action = 'hovered', data = { cid = cid } })
-        end
-      end
-      Wait(80)
+      hoveredPed = pickHoveredPed()
+      Wait(50)
     end
   end)
 
-  -- Draw a marker over hovered + selected peds each frame
+  -- Per-frame draw of markers + labels
   CreateThread(function()
     while active do
       Wait(0)
-      if Config.Selection.drawHoverMarker then
-        local function drawMarkerOnPed(ped, color)
-          if not ped or not DoesEntityExist(ped) then return end
-          local pos = GetEntityCoords(ped)
-          local h = Config.Selection.hoverMarkerHeightOffset or 1.05
-          DrawMarker(
-            2, -- chevron pointing down
-            pos.x, pos.y, pos.z + h,
-            0, 0, 0, 0, 0, 0,
-            0.3, 0.3, 0.3,
-            color[1], color[2], color[3], color[4],
-            true, true, 2, false, nil, nil, false
+      if hoveredPed and DoesEntityExist(hoveredPed) then
+        local pos = GetEntityCoords(hoveredPed)
+        if PedSetup.IsEmptySlot(hoveredPed) then
+          -- 3D "+" above the empty-slot ped
+          local plus = Config.EmptySlot.plus
+          local height = plus.heightOffset or 1.05
+          drawText3D(
+            vector3(pos.x, pos.y, pos.z + height + 0.4),
+            plus.text or '+',
+            plus.scale or 1.8,
+            plus.color or { 255, 220, 130, 230 }
           )
-        end
-        if hoveredPed and hoveredCid ~= selectedCid then
-          drawMarkerOnPed(hoveredPed, Config.Selection.hoverOutline)
-        end
-        if selectedCid then
-          for _, ped in pairs(Scenarios.PlayerPeds()) do
-            if DoesEntityExist(ped) and Scenarios.PedToCid(ped) == selectedCid then
-              drawMarkerOnPed(ped, Config.Selection.selectedOutline)
-              break
-            end
+          drawMarker(
+            vector3(pos.x, pos.y, pos.z + (Config.Hover.labelHeightOffset or 1.05)),
+            Config.EmptySlot.hoverTint or { 255, 220, 130, 200 }
+          )
+        else
+          local cid = PedSetup.PedToCid(hoveredPed)
+          local char
+          for _, c in ipairs(sessionCharacters) do
+            if c.cid == cid then char = c; break end
           end
+          if char then
+            drawText3D(
+              vector3(pos.x, pos.y, pos.z + (Config.Hover.labelHeightOffset or 1.05) + 0.45),
+              char.name,
+              0.5,
+              { 255, 255, 255, 230 }
+            )
+            drawText3D(
+              vector3(pos.x, pos.y, pos.z + (Config.Hover.labelHeightOffset or 1.05) + 0.18),
+              char.job or '',
+              0.35,
+              { 200, 200, 200, 200 }
+            )
+          end
+          drawMarker(
+            vector3(pos.x, pos.y, pos.z + (Config.Hover.labelHeightOffset or 1.05)),
+            Config.Hover.charHoverTint or { 0, 220, 255, 200 }
+          )
         end
       end
     end
@@ -104,16 +133,7 @@ end
 
 function Hover.Stop()
   active = false
-  hoveredCid = nil
   hoveredPed = nil
-  selectedCid = nil
 end
 
-function Hover.SetCursor(x, y)
-  if type(x) == 'number' then lastNuiX = math.max(0, math.min(1, x)) end
-  if type(y) == 'number' then lastNuiY = math.max(0, math.min(1, y)) end
-end
-
-function Hover.HoveredCid() return hoveredCid end
-function Hover.SetSelectedCid(cid) selectedCid = cid end
-function Hover.SelectedCid() return selectedCid end
+function Hover.SetCharacters(characters) sessionCharacters = characters or {} end

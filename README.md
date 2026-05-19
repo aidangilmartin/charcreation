@@ -1,76 +1,94 @@
 # cc_multichar
 
-Cinematic multi-character selector for FiveM. Auto-detects **Qbox**, **QBCore**, and **ESX**, with a config-first setup and a React-based NUI.
+A **drag-and-drop character selector** for FiveM. You see all your characters as peds in a cinematic scene. Click a character to play as them. Click an empty slot (a faded random ped with a "+" on hover) to create a new character via your framework's existing creator.
+
+No bundled spawn picker. No bundled character creation UI. We log the player in via the framework adapter and re-fire its native login event, so your existing spawn resource (qbx_spawn, qb-spawn, esx_spawn, etc.) just works.
 
 ## Features
 
-- Multi-framework adapter (Qbox / QBCore / ESX / standalone via data providers)
-- Cinematic ensemble scenes (BBQ, fishing, mechanic, hospital, drug deal, robbery, police chase, drive-by) with all of the player's characters appearing in-world
-- Click on a character ped in the scene to select; spawn picker afterwards (last location, apartments, static points, job points)
-- **Private routing-bucket instance** — no one else sees the cinematic scene or your character peds; ambient world traffic is suppressed for cinematic clarity
-- Built-in name/DOB/gender/nationality create form, then hands off to an appearance editor (illenium-appearance / qb-clothing / your custom export)
-- Slot count resolved from: config default → ace permission tier → per-license DB override
-- Ambient SFX per scenario, Discord rich presence (selector phase), /switch command with safe-zone gating + cooldown, hold-to-skip cinematic intro, extended stats panel (playtime, K/D, vehicles, properties, citations)
-- Structured logger with per-category levels, file + Discord webhook sinks, slow-query timing, and an in-game debug overlay
-- Server-authoritative selection, rate limiting, audit logging
+- Multi-framework: auto-detects Qbox / QBCore / ESX, falls back to standalone via data providers
+- One ensemble cinematic scene; layout is a config function so you can place peds anywhere
+- Empty slots rendered as random translucent peds with a "+" marker on hover
+- Click-to-select via cursor + 3D head-projection (no fiddly raycasts, no UI to build)
+- Private routing-bucket per session — other players never see your scene
+- Hand-off hooks: `Config.Handlers.onCharacterSelected` and `Config.Handlers.onCreateCharacter` in `framework` / `event` / `export` modes
+- Slot precedence chain: data provider → DB row → per-license config → ace tier → default
+- Server-authoritative, rate-limited events, structured logger
 
 ## Install
 
 1. Drop the resource into `resources/`.
-2. Ensure `oxmysql` starts before this resource.
-3. Build the React NUI:
-   ```sh
-   cd ui
-   npm install
-   npm run build
-   ```
-   This emits to `html/` (which `fxmanifest.lua` serves).
-4. Edit `config/*.lua` to taste.
-5. Add to `server.cfg`:
+2. Start `oxmysql` before this resource (or wire the data providers in `config/config.lua`).
+3. Add to `server.cfg`:
    ```
    ensure cc_multichar
    ```
+4. Edit `config/config.lua` — at minimum review `Config.Slots`, `Config.Scene.anchor`, and `Config.Handlers`.
+
+That's it. No `npm install`, no build step.
 
 ## Configuration
 
-| File | Purpose |
+Everything lives in `config/config.lua` with inline comments for every option. The five sections you'll actually edit:
+
+| Section | What it controls |
 | --- | --- |
-| `config/core.lua` | Framework override, slots precedence, appearance/creator exports, data provider hooks |
-| `config/scenes.lua` | Cinematic scene presets (location, camera, animation, weather, time) |
-| `config/spawn.lua` | Static spawn points, apartments, job spawns, last-location toggle |
-| `config/ui.lua` | Theme colors, displayed fields, validation rules, text strings |
-| `config/security.lua` | Rate limits, audit logging |
+| `Config.Slots` | How many characters each player gets (default + ace tiers + DB overrides) |
+| `Config.Scene` | The cinematic scene: anchor, camera, weather, time, ped layout function |
+| `Config.EmptySlot` | Random peds + opacity + "+" marker for unused slots |
+| `Config.Handlers.onCharacterSelected` | What to do after a character is logged in (default: re-fire framework's native login event) |
+| `Config.Handlers.onCreateCharacter` | What to do when an empty slot is clicked (default: fire `cc_multichar:createRequested` for your resource to handle) |
 
-### Slot precedence
+## Hand-off examples
 
-1. `Config.DataProviders.customGetSlotOverride(src, license)`
-2. Row in `cc_multichar_slots` table (auto-created if `ensureSchemaOnStart`)
-3. `Config.Slots.perLicense[license]`
-4. First matching `Config.Slots.aceTiers` entry (`IsPlayerAceAllowed`)
-5. `Config.Slots.default`
+**Use your existing framework spawn resource (default):**
+```lua
+Config.Handlers.onCharacterSelected = {
+  mode = 'framework',
+  framework = {
+    qbox   = 'qbx_core:server:onPlayerLoaded',
+    qbcore = 'QBCore:Server:OnPlayerLoaded',
+    esx    = 'esx:playerLoaded',
+  },
+}
+```
 
-### Data providers
+**Trigger your own spawn picker:**
+```lua
+-- In your spawn resource:
+AddEventHandler('cc_multichar:characterSelected', function(src, character)
+  exports['my_spawn_resource']:OpenPicker(src, character)
+end)
+```
+```lua
+-- In config.lua:
+Config.Handlers.onCharacterSelected.mode = 'event'
+```
 
-Override any of these in `config/core.lua` to support non-standard schemas:
-- `customLoadCharacters(src, license)` → array of normalized characters
-- `customCreateCharacter(src, license, info)` → created character row
-- `customDeleteCharacter(src, license, cid)` → boolean
-- `customGetLastLocation(src, cid)` → vec4
-- `customGetAppearance(src, cid)` → appearance table
-- `customLoginCharacter(src, character)` → custom framework login
+**Open your own character creator:**
+```lua
+-- In your creator resource, listening for the empty-slot click:
+AddEventHandler('cc_multichar:client:createRequested', function(slotIndex)
+  -- Your UI for name/DOB/appearance ...
+  -- When done, save the character, then:
+  TriggerServerEvent('my_resource:saveCharacter', data)
+end)
+
+-- And on the server, after saving:
+exports.cc_multichar:Reopen(src)  -- refreshes our selector with the new character
+```
 
 ## Exports
 
-- `exports.cc_multichar:OpenForPlayer(src)` — open the selector for a given player.
-
-## NUI development
-
-Vite dev server isn't useful inside FiveM (it doesn't expose `GetParentResourceName`), so develop the UI by running `npm run build` and reloading the resource. To work on UI in a browser, mock `window.GetParentResourceName` and post messages manually.
+| Export | When to call |
+| --- | --- |
+| `exports.cc_multichar:OpenForPlayer(src)` | Manually open the selector for a player (use when `AutoOpenOnJoin = false`) |
+| `exports.cc_multichar:Reopen(src)` | After your creator resource finishes saving, refresh the selector so the new character is visible |
 
 ## Tested against
 
 - Qbox / qbx_core
 - QBCore (latest)
-- ESX 1.x with esx_multicharacter-style identifier suffixing
+- ESX 1.x (with esx_multicharacter-style identifier suffixing)
 
-For other frameworks, wire data providers in `config/core.lua`.
+For other frameworks, wire `Config.DataProviders` in `config/config.lua`.

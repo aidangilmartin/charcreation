@@ -1,12 +1,14 @@
 # Changelog
 
+## v2.0.0
+- Stripped back to a drag-and-drop selector. No bundled UI, no React, no build step.
+- One ensemble scene; characters and empty slots are rendered as peds in-world.
+- Empty slots show as random reduced-alpha peds with a 3D "+" on hover.
+- Click handling is server-authoritative; cursor + screen-projected head bones replace raycast hover.
+- Two clean hand-off hooks: `onCharacterSelected` (default re-fires framework login) and `onCreateCharacter` (fires an event for your resource).
+- Routing-bucket isolation kept so other players don't see the scene.
+- Multi-framework adapter (Qbox / QBCore / ESX / standalone) kept.
+- Logging simplified, single configuration file at `config/config.lua`.
+
 ## v1.0.0
-- Full rewrite of the resource.
-- Multi-framework support: Qbox, QBCore, ESX (with custom data provider hooks for anything else).
-- React + Vite NUI replacing the previous vanilla JS / Angular-CDN approach.
-- Cinematic scene system with weighted-random rotation, live in-world ped preview, and appearance loading via configurable export (illenium-appearance / qb-clothing).
-- Spawn picker after character select: last location, apartments, static points, job points; supports fly-to camera preview on hover.
-- Built-in create form (firstname / lastname / DOB / gender / nationality), then hands off to an appearance editor.
-- Type-to-confirm character deletion (replaces server-issued token flow).
-- Slots resolved via precedence chain: data provider → DB override table → per-license config → ace tier → default.
-- Server-authoritative state machine; rate-limited events; optional Discord audit webhook.
+- Initial full implementation with React+Vite UI, scenario engine, spawn picker, /switch, Discord presence. Superseded by v2.
