@@ -33,7 +33,11 @@ local function applyAppearance(ped, appearance)
   local cfg = Config.Appearance.loader
   if not cfg or not cfg.resource or not cfg.setter then return end
   if GetResourceState(cfg.resource) ~= 'started' then return end
-  pcall(function() exports[cfg.resource][cfg.setter](nil, ped, appearance) end)
+  -- FiveM exports proxy strips self, so call without a leading nil.
+  local ok, err = pcall(function()
+    exports[cfg.resource][cfg.setter](ped, appearance)
+  end)
+  if not ok then Log.warn('scene', 'appearance setter failed: %s', tostring(err)) end
 end
 
 local function createPed(modelHash, coords, heading)
